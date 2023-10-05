@@ -9,3 +9,5 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 calamine = "0.19.1"
+chrono = "0.4.31"
+chrono-tz = "0.8.3"
