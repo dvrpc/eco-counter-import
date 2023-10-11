@@ -1,2 +1,4 @@
 /target
 /spreadsheets
+.env
+Cargo.lock

@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 
 use calamine::{open_workbook, DataType, Range, Reader, Xlsx};
 use chrono::prelude::*;
 use chrono_tz::US::Eastern;
 use lazy_static::lazy_static;
+use oracle::{Connection, Error, Version};
 
 struct Counter {
     station_name: String,
@@ -50,6 +52,21 @@ lazy_static! {
 }
 
 fn main() {
+    // Oracle env vars and connection
+    dotenvy::dotenv().expect("Unable to load .env file");
+    let username = env::var("USERNAME").expect("Unable to load username from .env file.");
+    let password = env::var("PASSWORD").expect("Unable to load password from .env file.");
+
+    let conn = Connection::connect(username, password, "dvrpcprod_tp_tls").unwrap();
+
+    let sql = "SELECT * FROM TBLHEADER";
+
+    let rows = conn.query(sql, &[]);
+
+    for row in rows.unwrap() {
+        dbg!(row.unwrap());
+    }
+
     // TODO: probably want to log these in place instead of creating vec to later print out
     let mut errors = vec![];
 
