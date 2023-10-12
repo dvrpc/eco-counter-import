@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 
-use calamine::{open_workbook, DataType, Range, Reader, Xlsx};
 use chrono::prelude::*;
 use chrono_tz::US::Eastern;
 use lazy_static::lazy_static;
@@ -51,12 +50,28 @@ lazy_static! {
     ]);
 }
 
+/*
+You can also get a CSV, rather than a spreadsheet. I'm thinking that it'll just be easier to verify
+that the header is correct and then grab data by expected order
+
+
+
+
+*/
+
 fn main() {
+    // TODO: probably want to log these in place instead of creating vec to later print out
+    // let mut errors = vec![];
+
+    // Iterate through rows
+
+    // let dt = Eastern.with_ymd_and_hms(2023, 5, 6, 12, 30, 18);
+
+    // connect to Oracle
     // Oracle env vars and connection
     dotenvy::dotenv().expect("Unable to load .env file");
     let username = env::var("USERNAME").expect("Unable to load username from .env file.");
     let password = env::var("PASSWORD").expect("Unable to load password from .env file.");
-
     let conn = Connection::connect(username, password, "dvrpcprod_tp_tls").unwrap();
 
     let sql = "SELECT * FROM TBLHEADER";
@@ -66,64 +81,6 @@ fn main() {
     for row in rows.unwrap() {
         dbg!(row.unwrap());
     }
-
-    // TODO: probably want to log these in place instead of creating vec to later print out
-    let mut errors = vec![];
-
-    // Crawl specific directory, printing filenames
-    for entry in fs::read_dir("spreadsheets").unwrap() {
-        // Get Excel file paths
-        let path = &entry.unwrap().path();
-
-        // SKip the file if no extension or not .xlsx
-        match path.extension() {
-            Some(v) if v.to_ascii_lowercase() != "xlsx" => {
-                continue;
-            }
-            Some(_) => (),
-            None => continue,
-        }
-
-        // Set station from filename (format is "Station name here monthname YYYY") where "station
-        // name here" can be any number of words separated by a space)
-        let station: i32 = match path.file_stem() {
-            Some(v) => {
-                let stem: &str = v.to_str().unwrap().rsplitn(3, ' ').collect::<Vec<_>>()[2];
-                match STATIONS.get(stem) {
-                    Some(v) => *v,
-                    None => {
-                        errors.push(format!("No stations matches file {}", stem));
-                        continue;
-                    }
-                }
-            }
-            None => continue,
-        };
-
-        dbg!(&station);
-
-        // Open the first worksheet of the workbook
-        let mut wb: Xlsx<_> = open_workbook(path).expect("Could not open workbook.");
-        let ws = wb.worksheet_range_at(0).unwrap().unwrap();
-
-        dbg!(&wb.sheet_names());
-
-        // determine data structure for each file
-        // Iterate through rows of the spreadsheet
-        // first column: datetime (15 minute interval)
-        // second column: total
-        // third - end: pedestrian or bike; inbound/outbound
-        // TODO: remove the take - temporarily using to shorten the output in dbg
-        // for row in ws.rows().take(5) {
-        //     dbg!(&row);
-        // }
-
-        let dt = Eastern.with_ymd_and_hms(2023, 5, 6, 12, 30, 18);
-
-        // pull data from each file
-    }
-
-    // connect to Oracle
 
     // delete any data matching what we're about to enter (by date/station)
 
