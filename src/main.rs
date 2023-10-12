@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::env;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 
 use chrono::prelude::*;
 use chrono_tz::US::Eastern;
@@ -50,23 +51,40 @@ lazy_static! {
     ]);
 }
 
-/*
-You can also get a CSV, rather than a spreadsheet. I'm thinking that it'll just be easier to verify
-that the header is correct and then grab data by expected order
-
-
-
-
-*/
-
 fn main() {
-    // TODO: probably want to log these in place instead of creating vec to later print out
-    // let mut errors = vec![];
+    // Set up file to hold errors and open data file, removing any existing file first.
+    let error_filename = "errors.txt";
+    fs::remove_file(error_filename).ok();
+    let mut error_file = File::create(error_filename).expect("Unable to open file to hold errors.");
 
-    // Iterate through rows
+    // Open and process the CSV
+    let data_file = match File::open("export.csv") {
+        Ok(v) => v,
+        Err(e) => {
+            error_file
+                .write_all(format!("Unable to open data file: {e}").as_bytes())
+                .unwrap();
+            return;
+        }
+    };
+
+    let mut rdr = csv::ReaderBuilder::new()
+        .flexible(true)
+        .has_headers(false)
+        .from_reader(data_file);
+
+    let header = rdr.records().skip(1).take(1).collect::<Vec<_>>();
+
+    dbg!(header);
+
+    for result in rdr.records().skip(1).take(5) {
+        let record = result.unwrap();
+        dbg!(record);
+    }
 
     // let dt = Eastern.with_ymd_and_hms(2023, 5, 6, 12, 30, 18);
 
+    /*
     // connect to Oracle
     // Oracle env vars and connection
     dotenvy::dotenv().expect("Unable to load .env file");
@@ -81,10 +99,16 @@ fn main() {
     for row in rows.unwrap() {
         dbg!(row.unwrap());
     }
+    */
 
     // delete any data matching what we're about to enter (by date/station)
 
     // insert data into BIKEPED_TEST database
 
     // determine notification/confirmation system
+
+    // If error file is empty, rm it
+    if fs::read_to_string(error_filename).unwrap().is_empty() {
+        fs::remove_file(error_filename).ok();
+    }
 }
