@@ -1,14 +1,17 @@
-use std::collections::HashMap;
+use std::env;
 use std::fs::{self, File};
 use std::io::Write;
+use std::sync::mpsc;
+use std::thread;
 
 use chrono::prelude::*;
 use csv::StringRecord;
+use oracle::sql_type::Timestamp;
 use oracle::{Connection, Error, Version};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Count {
-    station_id: i32,
+    location_id: i32,
     datetime: NaiveDateTime,
     total: Option<i32>,
     ped_in: Option<i32>,
@@ -19,7 +22,7 @@ struct Count {
 
 impl Count {
     fn new(
-        station_id: i32,
+        location_id: i32,
         datetime: NaiveDateTime,
         counts: &[Option<i32>],
         ped: bool,
@@ -55,7 +58,7 @@ impl Count {
         }
 
         Self {
-            station_id,
+            location_id,
             datetime,
             total: counts[0],
             ped_in,
@@ -198,83 +201,140 @@ fn main() {
         return;
     }
 
-    let mut all_counts = vec![];
+    // let mut all_counts = vec![];
+
+    // Channel
+    let (tx, rx) = mpsc::channel();
 
     // Process data rows
-    for result in rdr.records() {
-        let record = result.unwrap();
+    thread::spawn(move || {
+        for result in rdr.records() {
+            let record = result.unwrap();
 
-        // first col is date, for all stations
-        let datetime: String = record.iter().take(1).collect();
-        let datetime = NaiveDateTime::parse_from_str(&datetime, "%b %e, %Y %l:%M %p").unwrap();
+            // first col is date, for all stations
+            let datetime: String = record.iter().take(1).collect();
+            let datetime = NaiveDateTime::parse_from_str(&datetime, "%b %e, %Y %l:%M %p").unwrap();
 
-        // now get counts, and convert to Options from &str
-        let counts = record
-            .iter()
-            .map(|v| v.parse::<i32>().ok())
-            .collect::<Vec<_>>();
+            // now get counts, and convert to Options from &str
+            let counts = record
+                .iter()
+                .map(|v| v.parse::<i32>().ok())
+                .collect::<Vec<_>>();
 
-        // extract each counter's data from full row of data
-        let bartram = Count::new(16, datetime, &counts[1..=5], true, true);
-        let chester_valley_trail = Count::new(1, datetime, &counts[6..=10], true, true);
-        let cooper_river_trail = Count::new(11, datetime, &counts[11..=15], true, true);
-        let cynwyd_heritage_tail = Count::new(3, datetime, &counts[16..=20], true, true);
-        let darby_creek_trail = Count::new(12, datetime, &counts[21..=25], true, true);
-        let kelly_dr = Count::new(5, datetime, &counts[26..=30], true, true);
-        let lawrence_hopewell_tail = Count::new(8, datetime, &counts[31..=35], true, true);
-        let monroe_twp = Count::new(10, datetime, &counts[36..=40], true, true);
-        let pawlings_rd = Count::new(2, datetime, &counts[41..=45], true, true);
-        let pine_st = Count::new(24, datetime, &counts[46..=48], false, true);
-        let port_richmond = Count::new(7, datetime, &counts[49..=53], true, true);
-        let schuylkill_banks = Count::new(6, datetime, &counts[54..=58], true, true);
-        let spring_mill_station = Count::new(13, datetime, &counts[59..=63], true, true);
-        let spruce_st = Count::new(25, datetime, &counts[64..=66], false, true);
-        let tinicum_park = Count::new(23, datetime, &counts[67..=71], true, true);
-        let tullytown = Count::new(14, datetime, &counts[72..=76], true, true);
-        let us_202_parkway_trail = Count::new(9, datetime, &counts[77..=81], true, true);
-        let washington_crossing = Count::new(15, datetime, &counts[82..=86], true, true);
-        let waterfront_display = Count::new(26, datetime, &counts[87..=91], true, true);
-        let wissahickon_trail = Count::new(4, datetime, &counts[92..=96], true, true);
+            // extract each counter's data from full row of data, send through channel
 
-        all_counts.push(bartram);
-        all_counts.push(chester_valley_trail);
-        all_counts.push(cooper_river_trail);
-        all_counts.push(cynwyd_heritage_tail);
-        all_counts.push(darby_creek_trail);
-        all_counts.push(kelly_dr);
-        all_counts.push(lawrence_hopewell_tail);
-        all_counts.push(monroe_twp);
-        all_counts.push(pawlings_rd);
-        all_counts.push(pine_st);
-        all_counts.push(port_richmond);
-        all_counts.push(schuylkill_banks);
-        all_counts.push(spring_mill_station);
-        all_counts.push(spruce_st);
-        all_counts.push(tinicum_park);
-        all_counts.push(tullytown);
-        all_counts.push(us_202_parkway_trail);
-        all_counts.push(washington_crossing);
-        all_counts.push(waterfront_display);
-        all_counts.push(wissahickon_trail);
-    }
+            // Bartram
+            tx.send(Count::new(16, datetime, &counts[1..=5], true, true))
+                .unwrap();
+            // Chester Valley Trail
+            tx.send(Count::new(1, datetime, &counts[6..=10], true, true))
+                .unwrap();
+            // Cooper River Trail
+            tx.send(Count::new(11, datetime, &counts[11..=15], true, true))
+                .unwrap();
+            // Cynyd Heritage Trail
+            tx.send(Count::new(3, datetime, &counts[16..=20], true, true))
+                .unwrap();
+            // Darby Creek Trail
+            tx.send(Count::new(12, datetime, &counts[21..=25], true, true))
+                .unwrap();
+            // Kelly Dr
+            tx.send(Count::new(5, datetime, &counts[26..=30], true, true))
+                .unwrap();
+            // Lawrence Hopewell trail
+            tx.send(Count::new(8, datetime, &counts[31..=35], true, true))
+                .unwrap();
+            // Monroe Twp
+            tx.send(Count::new(10, datetime, &counts[36..=40], true, true))
+                .unwrap();
+            // Pawlings Rd
+            tx.send(Count::new(2, datetime, &counts[41..=45], true, true))
+                .unwrap();
+            // Pine St
+            tx.send(Count::new(24, datetime, &counts[46..=48], false, true))
+                .unwrap();
+            // Port Richmond
+            tx.send(Count::new(7, datetime, &counts[49..=53], true, true))
+                .unwrap();
+            // Schuylkill Banks
+            tx.send(Count::new(6, datetime, &counts[54..=58], true, true))
+                .unwrap();
+            // Spring Mill Station
+            tx.send(Count::new(13, datetime, &counts[59..=63], true, true))
+                .unwrap();
+            // Spruce St
+            tx.send(Count::new(25, datetime, &counts[64..=66], false, true))
+                .unwrap();
+            // Tinicum Park
+            tx.send(Count::new(23, datetime, &counts[67..=71], true, true))
+                .unwrap();
+            // Tullytown
+            tx.send(Count::new(14, datetime, &counts[72..=76], true, true))
+                .unwrap();
+            // US 202 Parkway Trail
+            tx.send(Count::new(9, datetime, &counts[77..=81], true, true))
+                .unwrap();
+            // Washington Cross
+            tx.send(Count::new(15, datetime, &counts[82..=86], true, true))
+                .unwrap();
+            // Waterfront Display
+            tx.send(Count::new(26, datetime, &counts[87..=91], true, true))
+                .unwrap();
+            tx.send(Count::new(4, datetime, &counts[92..=96], true, true))
+                .unwrap();
+        }
+    });
 
-    dbg!(all_counts);
-    /*
+    // dbg!(all_counts);
+
     // connect to Oracle
     // Oracle env vars and connection
     dotenvy::dotenv().expect("Unable to load .env file");
-    let username = env::var("USERNAME").expect("Unable to load username from .env file.");
-    let password = env::var("PASSWORD").expect("Unable to load password from .env file.");
-    let conn = Connection::connect(username, password, "dvrpcprod_tp_tls").unwrap();
+    // let conn = Connection::connect(username, password, "dvrpcprod_tp_tls").unwrap();
 
-    let sql = "SELECT * FROM TBLHEADER";
+    // let sql = "SELECT * FROM TBLHEADER";
 
-    let rows = conn.query(sql, &[]);
+    for received in rx {
+        // convert types database is expected
+        // let location_id = &received.location_id;
+        // let datetime = &received.datetime;
+        // let total = if let Some(v) = &received.total {
+        //     v
+        // } else {
+        //     ""k
+        // }
 
-    for row in rows.unwrap() {
-        dbg!(row.unwrap());
+        // convert datetime
+        let oracle_dt = Timestamp::new(
+            received.datetime.year(),
+            received.datetime.month(),
+            received.datetime.day(),
+            received.datetime.hour(),
+            received.datetime.minute(),
+            received.datetime.second(),
+            0,
+        );
+
+        dbg!("Got: {}", &received);
+        let username = env::var("USERNAME").expect("Unable to load username from .env file.");
+        let password = env::var("PASSWORD").expect("Unable to load password from .env file.");
+        let conn =
+            Connection::connect(&username.clone(), &password.clone(), "dvrpcprod_tp_tls").unwrap();
+        conn.execute(
+            // for now, just dumb insert - don't check for duplicates
+            "insert into TBLCOUNTDATA (locationid, countdate, total, pedin, pedout, bikein, bikeout, counttime) values (:1, :2, :3, :4, :5, :6, :7, :8)",
+            &[
+                &received.location_id,
+                &oracle_dt,
+                &received.total,
+                &received.ped_in,
+                &received.ped_out,
+                &received.bike_in,
+                &received.bike_out,
+                &oracle_dt,
+            ],
+        ).unwrap();
     }
-    */
 
     // delete any data matching what we're about to enter (by date/station)
 
