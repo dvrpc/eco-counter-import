@@ -1,8 +1,8 @@
 use std::env;
 use std::fs::{self, File};
 use std::io::Write;
-use std::sync::mpsc;
 use std::thread;
+use std::time;
 
 use chrono::prelude::*;
 use crossbeam::channel;
@@ -202,103 +202,121 @@ fn main() {
         return;
     }
 
+    // Create a channel, over which we'll send each individual Count from the rows
     let (tx, rx) = channel::unbounded();
 
     // Process data rows
-    thread::spawn(move || {
-        for result in rdr.records() {
-            let record = result.unwrap();
+    for result in rdr.records() {
+        let record = result.unwrap();
 
-            // first col is date, for all stations
-            let datetime: String = record.iter().take(1).collect();
-            let datetime = NaiveDateTime::parse_from_str(&datetime, "%b %e, %Y %l:%M %p").unwrap();
+        // first col is date, for all stations
+        let datetime: String = record.iter().take(1).collect();
+        let datetime = NaiveDateTime::parse_from_str(&datetime, "%b %e, %Y %l:%M %p").unwrap();
 
-            // now get counts, and convert to Options from &str
-            let counts = record
-                .iter()
-                .map(|v| v.parse::<i32>().ok())
-                .collect::<Vec<_>>();
+        // now get counts, and convert to Options from &str
+        let counts = record
+            .iter()
+            .map(|v| v.parse::<i32>().ok())
+            .collect::<Vec<_>>();
 
-            // extract each counter's data from full row of data, send through channel
+        // extract each counter's data from full row of data, send through channel
+        // Bartram
+        tx.send(Count::new(16, datetime, &counts[1..=5], true, true))
+            .unwrap();
+        // Chester Valley Trail
+        tx.send(Count::new(1, datetime, &counts[6..=10], true, true))
+            .unwrap();
+        // Cooper River Trail
+        tx.send(Count::new(11, datetime, &counts[11..=15], true, true))
+            .unwrap();
+        // Cynyd Heritage Trail
+        tx.send(Count::new(3, datetime, &counts[16..=20], true, true))
+            .unwrap();
+        // Darby Creek Trail
+        tx.send(Count::new(12, datetime, &counts[21..=25], true, true))
+            .unwrap();
+        // Kelly Dr
+        tx.send(Count::new(5, datetime, &counts[26..=30], true, true))
+            .unwrap();
+        // Lawrence Hopewell trail
+        tx.send(Count::new(8, datetime, &counts[31..=35], true, true))
+            .unwrap();
+        // Monroe Twp
+        tx.send(Count::new(10, datetime, &counts[36..=40], true, true))
+            .unwrap();
+        // Pawlings Rd
+        tx.send(Count::new(2, datetime, &counts[41..=45], true, true))
+            .unwrap();
+        // Pine St
+        tx.send(Count::new(24, datetime, &counts[46..=48], false, true))
+            .unwrap();
+        // Port Richmond
+        tx.send(Count::new(7, datetime, &counts[49..=53], true, true))
+            .unwrap();
+        // Schuylkill Banks
+        tx.send(Count::new(6, datetime, &counts[54..=58], true, true))
+            .unwrap();
+        // Spring Mill Station
+        tx.send(Count::new(13, datetime, &counts[59..=63], true, true))
+            .unwrap();
+        // Spruce St
+        tx.send(Count::new(25, datetime, &counts[64..=66], false, true))
+            .unwrap();
+        // Tinicum Park
+        tx.send(Count::new(23, datetime, &counts[67..=71], true, true))
+            .unwrap();
+        // Tullytown
+        tx.send(Count::new(14, datetime, &counts[72..=76], true, true))
+            .unwrap();
+        // US 202 Parkway Trail
+        tx.send(Count::new(9, datetime, &counts[77..=81], true, true))
+            .unwrap();
+        // Washington Cross
+        tx.send(Count::new(15, datetime, &counts[82..=86], true, true))
+            .unwrap();
+        // Waterfront Display
+        tx.send(Count::new(26, datetime, &counts[87..=91], true, true))
+            .unwrap();
+        tx.send(Count::new(4, datetime, &counts[92..=96], true, true))
+            .unwrap();
+    }
 
-            // Bartram
-            tx.send(Count::new(16, datetime, &counts[1..=5], true, true))
-                .unwrap();
-            // Chester Valley Trail
-            tx.send(Count::new(1, datetime, &counts[6..=10], true, true))
-                .unwrap();
-            // Cooper River Trail
-            tx.send(Count::new(11, datetime, &counts[11..=15], true, true))
-                .unwrap();
-            // Cynyd Heritage Trail
-            tx.send(Count::new(3, datetime, &counts[16..=20], true, true))
-                .unwrap();
-            // Darby Creek Trail
-            tx.send(Count::new(12, datetime, &counts[21..=25], true, true))
-                .unwrap();
-            // Kelly Dr
-            tx.send(Count::new(5, datetime, &counts[26..=30], true, true))
-                .unwrap();
-            // Lawrence Hopewell trail
-            tx.send(Count::new(8, datetime, &counts[31..=35], true, true))
-                .unwrap();
-            // Monroe Twp
-            tx.send(Count::new(10, datetime, &counts[36..=40], true, true))
-                .unwrap();
-            // Pawlings Rd
-            tx.send(Count::new(2, datetime, &counts[41..=45], true, true))
-                .unwrap();
-            // Pine St
-            tx.send(Count::new(24, datetime, &counts[46..=48], false, true))
-                .unwrap();
-            // Port Richmond
-            tx.send(Count::new(7, datetime, &counts[49..=53], true, true))
-                .unwrap();
-            // Schuylkill Banks
-            tx.send(Count::new(6, datetime, &counts[54..=58], true, true))
-                .unwrap();
-            // Spring Mill Station
-            tx.send(Count::new(13, datetime, &counts[59..=63], true, true))
-                .unwrap();
-            // Spruce St
-            tx.send(Count::new(25, datetime, &counts[64..=66], false, true))
-                .unwrap();
-            // Tinicum Park
-            tx.send(Count::new(23, datetime, &counts[67..=71], true, true))
-                .unwrap();
-            // Tullytown
-            tx.send(Count::new(14, datetime, &counts[72..=76], true, true))
-                .unwrap();
-            // US 202 Parkway Trail
-            tx.send(Count::new(9, datetime, &counts[77..=81], true, true))
-                .unwrap();
-            // Washington Cross
-            tx.send(Count::new(15, datetime, &counts[82..=86], true, true))
-                .unwrap();
-            // Waterfront Display
-            tx.send(Count::new(26, datetime, &counts[87..=91], true, true))
-                .unwrap();
-            tx.send(Count::new(4, datetime, &counts[92..=96], true, true))
-                .unwrap();
-        }
-    });
+    // Must drop the sender, otherwise the receiver will never stop waiting for it.
+    drop(tx);
 
     // connect to Oracle
     // Oracle env vars and connection
     dotenvy::dotenv().expect("Unable to load .env file");
     let username = env::var("USERNAME").expect("Unable to load username from .env file.");
     let password = env::var("PASSWORD").expect("Unable to load password from .env file.");
-    let conn = Connection::connect(username, password, "dvrpcprod_tp_tls").unwrap();
+    let start = time::Instant::now();
 
-    for received in rx {
-        insert(&conn, received)
+    // Fork: spawn a new thread, with each one adding a receiver, taking a Count from the channel,
+    // and inserting it into the database
+    // TODO: I've done this manually, but I imagine std (thread::ThreadPool?) has built-ins that
+    // would do this better
+    // TODO: test number of records added between each run
+    const NTHREADS: usize = 20;
+    let mut thread_handles = vec![];
+    for i in 0..=NTHREADS {
+        let receiver = rx.clone();
+        let conn = Connection::connect(&username, &password, "dvrpcprod_tp_tls").unwrap();
+        thread_handles.push(thread::spawn(move || {
+            while let Ok(received) = receiver.recv() {
+                println!("hello from {i}");
+                insert(&conn, received);
+            }
+        }));
     }
 
-    // delete any data matching what we're about to enter (by date/station)
+    // Join: wait for all threads to finish.
+    for handle in thread_handles {
+        handle.join().unwrap();
+    }
 
-    // insert data into BIKEPED_TEST database
+    println!("{:?}", start.elapsed());
 
-    // determine notification/confirmation system
+    // TODO: determine notification/confirmation system
 
     // If error file is empty, rm it
     if fs::read_to_string(error_filename).unwrap().is_empty() {
@@ -307,6 +325,8 @@ fn main() {
 }
 
 fn insert(conn: &Connection, count: Count) {
+    // TODO: delete any data matching what we're about to enter (by date/station)
+
     // convert datetime
     let oracle_dt = Timestamp::new(
         count.datetime.year(),
@@ -319,9 +339,9 @@ fn insert(conn: &Connection, count: Count) {
     );
 
     dbg!("Got: {}", &count);
-    // let conn =
-    //     Connection::connect(&username.clone(), &password.clone(), "dvrpcprod_tp_tls").unwrap();
     // for now, just dumb insert - don't check for duplicates
+
+    // how are `None`s getting entered into the database? 0 or nothing?
     conn.execute("insert into TBLCOUNTDATA (locationid, countdate, total, pedin, pedout, bikein, bikeout, counttime) values (:1, :2, :3, :4, :5, :6, :7, :8)",
         &[
             &count.location_id,
