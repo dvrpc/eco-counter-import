@@ -5,6 +5,7 @@ use std::sync::mpsc;
 use std::thread;
 
 use chrono::prelude::*;
+use crossbeam::channel;
 use csv::StringRecord;
 use oracle::sql_type::Timestamp;
 use oracle::{Connection, Error, Version};
@@ -201,10 +202,7 @@ fn main() {
         return;
     }
 
-    // let mut all_counts = vec![];
-
-    // Channel
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = channel::unbounded();
 
     // Process data rows
     thread::spawn(move || {
@@ -285,55 +283,15 @@ fn main() {
         }
     });
 
-    // dbg!(all_counts);
-
     // connect to Oracle
     // Oracle env vars and connection
     dotenvy::dotenv().expect("Unable to load .env file");
-    // let conn = Connection::connect(username, password, "dvrpcprod_tp_tls").unwrap();
-
-    // let sql = "SELECT * FROM TBLHEADER";
+    let username = env::var("USERNAME").expect("Unable to load username from .env file.");
+    let password = env::var("PASSWORD").expect("Unable to load password from .env file.");
+    let conn = Connection::connect(username, password, "dvrpcprod_tp_tls").unwrap();
 
     for received in rx {
-        // convert types database is expected
-        // let location_id = &received.location_id;
-        // let datetime = &received.datetime;
-        // let total = if let Some(v) = &received.total {
-        //     v
-        // } else {
-        //     ""k
-        // }
-
-        // convert datetime
-        let oracle_dt = Timestamp::new(
-            received.datetime.year(),
-            received.datetime.month(),
-            received.datetime.day(),
-            received.datetime.hour(),
-            received.datetime.minute(),
-            received.datetime.second(),
-            0,
-        );
-
-        dbg!("Got: {}", &received);
-        let username = env::var("USERNAME").expect("Unable to load username from .env file.");
-        let password = env::var("PASSWORD").expect("Unable to load password from .env file.");
-        let conn =
-            Connection::connect(&username.clone(), &password.clone(), "dvrpcprod_tp_tls").unwrap();
-        conn.execute(
-            // for now, just dumb insert - don't check for duplicates
-            "insert into TBLCOUNTDATA (locationid, countdate, total, pedin, pedout, bikein, bikeout, counttime) values (:1, :2, :3, :4, :5, :6, :7, :8)",
-            &[
-                &received.location_id,
-                &oracle_dt,
-                &received.total,
-                &received.ped_in,
-                &received.ped_out,
-                &received.bike_in,
-                &received.bike_out,
-                &oracle_dt,
-            ],
-        ).unwrap();
+        insert(&conn, received)
     }
 
     // delete any data matching what we're about to enter (by date/station)
@@ -346,4 +304,34 @@ fn main() {
     if fs::read_to_string(error_filename).unwrap().is_empty() {
         fs::remove_file(error_filename).ok();
     }
+}
+
+fn insert(conn: &Connection, count: Count) {
+    // convert datetime
+    let oracle_dt = Timestamp::new(
+        count.datetime.year(),
+        count.datetime.month(),
+        count.datetime.day(),
+        count.datetime.hour(),
+        count.datetime.minute(),
+        count.datetime.second(),
+        0,
+    );
+
+    dbg!("Got: {}", &count);
+    // let conn =
+    //     Connection::connect(&username.clone(), &password.clone(), "dvrpcprod_tp_tls").unwrap();
+    // for now, just dumb insert - don't check for duplicates
+    conn.execute("insert into TBLCOUNTDATA (locationid, countdate, total, pedin, pedout, bikein, bikeout, counttime) values (:1, :2, :3, :4, :5, :6, :7, :8)",
+        &[
+            &count.location_id,
+            &oracle_dt,
+            &count.total,
+            &count.ped_in,
+            &count.ped_out,
+            &count.bike_in,
+            &count.bike_out,
+            &oracle_dt,
+        ],
+    ).unwrap();
 }
