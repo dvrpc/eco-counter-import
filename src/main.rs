@@ -8,7 +8,7 @@ use chrono::prelude::*;
 use crossbeam::channel;
 use csv::StringRecord;
 use oracle::sql_type::Timestamp;
-use oracle::{Connection, Error, Version};
+use oracle::{Connection, Error};
 
 #[derive(Debug, Clone)]
 struct Count {
@@ -172,6 +172,12 @@ const EXPECTED_HEADER: &[&str] = &[
 ];
 
 fn main() {
+    /*
+      TODO:
+        * add logging (continuous; separate from any report generated about outcome)
+        * error handling
+    */
+
     // Oracle env vars
     dotenvy::dotenv().expect("Unable to load .env file");
     let username = env::var("USERNAME").expect("Unable to load username from .env file.");
@@ -235,7 +241,7 @@ fn main() {
         all_counts.push(Count::new(1, datetime, &counts[6..=10], true, true));
         // Cooper River Trail
         all_counts.push(Count::new(11, datetime, &counts[11..=15], true, true));
-        // Cynyd Heritage Trail
+        // Cynwyd Heritage Trail
         all_counts.push(Count::new(3, datetime, &counts[16..=20], true, true));
         // Darby Creek Trail
         all_counts.push(Count::new(12, datetime, &counts[21..=25], true, true));
@@ -267,7 +273,7 @@ fn main() {
         all_counts.push(Count::new(15, datetime, &counts[82..=86], true, true));
         // Waterfront Display
         all_counts.push(Count::new(26, datetime, &counts[87..=91], true, true));
-        // Wissahickon
+        // Wissahickon Trail
         all_counts.push(Count::new(4, datetime, &counts[92..=96], true, true));
     }
 
@@ -277,43 +283,39 @@ fn main() {
     let conn =
         Connection::connect(&username.clone(), &password.clone(), "dvrpcprod_tp_tls").unwrap();
     for date in dates {
-        match conn.execute(
+        if let Err(e) = conn.execute(
             "delete from TBLCOUNTDATA where to_char(COUNTDATE, 'DD-MON-YY')=:1",
             &[&date],
         ) {
-            Ok(v) => println!("{:?}", v),
-            Err(e) => println!("{:?}", e),
+            error_file
+                .write_all(format!("Error deleting existing records from db: {e}").as_bytes())
+                .expect("Could not write to error file.");
+            return;
         }
         conn.commit().unwrap();
     }
 
-    // Create a channel, through which we'll send each individual Count from the rows
+    // Create a channel to handle moving data into threads
     let (tx, rx) = channel::unbounded();
 
-    // Process data rows
+    // Create thread to send Counts through the channel
     let sender_thread_handle = thread::spawn(move || {
         for count in all_counts {
-            println!("hello in sender thread");
             tx.send(count).unwrap();
         }
     });
 
     let start = time::Instant::now();
 
-    // Fork: spawn a new thread, with each one adding a receiver, taking a Count from the channel,
-    // and inserting it into the database
-    // TODO: I've done this manually, but I imagine std (thread::ThreadPool?) has built-ins that
-    // would do this better
-    // TODO: test number of records added between each run
-    const NTHREADS: usize = 20;
+    // Fork: spawn new threads, with each one adding a receiver, taking a Count from the channel,
+    // and inserting it into the database.
     let mut receiver_thread_handles = vec![];
-    for i in 0..=NTHREADS {
+    for _ in 0..=20 {
         let receiver = rx.clone();
         let conn = Connection::connect(&username, &password, "dvrpcprod_tp_tls").unwrap();
         receiver_thread_handles.push(thread::spawn(move || {
-            while let Ok(received) = receiver.recv() {
-                println!("hello from receiver {i}");
-                insert(&conn, received);
+            while let Ok(count) = receiver.recv() {
+                insert(&conn, count);
             }
             conn.commit().unwrap();
         }));
