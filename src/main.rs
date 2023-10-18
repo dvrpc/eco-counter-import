@@ -172,6 +172,10 @@ const EXPECTED_HEADER: &[&str] = &[
 ];
 
 fn main() {
+    // Oracle env vars
+    dotenvy::dotenv().expect("Unable to load .env file");
+    let username = env::var("USERNAME").expect("Unable to load username from .env file.");
+    let password = env::var("PASSWORD").expect("Unable to load password from .env file.");
     // Remove any existing error file, create new one to hold errors.
     let error_filename = "errors.txt";
     fs::remove_file(error_filename).ok();
@@ -202,93 +206,98 @@ fn main() {
         return;
     }
 
-    // Create a channel, over which we'll send each individual Count from the rows
-    let (tx, rx) = channel::unbounded();
+    /*
+      Loop over all records in the CSV, extracting dates into one vector (in order to delete any
+      existing records with that date to prevent adding duplicates) and everything into another
+      vector (to be processed/entered into database after deletes complete).
+      Separating the delete/insertion allows for far fewer deletes (one per day of month rather
+      than one per record).
+    */
+    let mut dates = vec![];
+    let mut all_counts = vec![];
 
-    // Process data rows
     for result in rdr.records() {
         let record = result.unwrap();
 
-        // first col is date, for all stations
-        let datetime: String = record.iter().take(1).collect();
-        let datetime = NaiveDateTime::parse_from_str(&datetime, "%b %e, %Y %l:%M %p").unwrap();
+        // Extract date from datetime, in the format our database expects (DD-MON-YY).
+        let datetime = &record[0];
+        let datetime = NaiveDateTime::parse_from_str(datetime, "%b %e, %Y %l:%M %p").unwrap();
+        dates.push(datetime.format("%d-%b-%y").to_string().to_uppercase());
 
-        // now get counts, and convert to Options from &str
+        // Extract everything, by particular location/count, converting to Options from &str.
         let counts = record
             .iter()
             .map(|v| v.parse::<i32>().ok())
             .collect::<Vec<_>>();
-
-        // extract each counter's data from full row of data, send through channel
         // Bartram
-        tx.send(Count::new(16, datetime, &counts[1..=5], true, true))
-            .unwrap();
+        all_counts.push(Count::new(16, datetime, &counts[1..=5], true, true));
         // Chester Valley Trail
-        tx.send(Count::new(1, datetime, &counts[6..=10], true, true))
-            .unwrap();
+        all_counts.push(Count::new(1, datetime, &counts[6..=10], true, true));
         // Cooper River Trail
-        tx.send(Count::new(11, datetime, &counts[11..=15], true, true))
-            .unwrap();
+        all_counts.push(Count::new(11, datetime, &counts[11..=15], true, true));
         // Cynyd Heritage Trail
-        tx.send(Count::new(3, datetime, &counts[16..=20], true, true))
-            .unwrap();
+        all_counts.push(Count::new(3, datetime, &counts[16..=20], true, true));
         // Darby Creek Trail
-        tx.send(Count::new(12, datetime, &counts[21..=25], true, true))
-            .unwrap();
+        all_counts.push(Count::new(12, datetime, &counts[21..=25], true, true));
         // Kelly Dr
-        tx.send(Count::new(5, datetime, &counts[26..=30], true, true))
-            .unwrap();
+        all_counts.push(Count::new(5, datetime, &counts[26..=30], true, true));
         // Lawrence Hopewell trail
-        tx.send(Count::new(8, datetime, &counts[31..=35], true, true))
-            .unwrap();
+        all_counts.push(Count::new(8, datetime, &counts[31..=35], true, true));
         // Monroe Twp
-        tx.send(Count::new(10, datetime, &counts[36..=40], true, true))
-            .unwrap();
+        all_counts.push(Count::new(10, datetime, &counts[36..=40], true, true));
         // Pawlings Rd
-        tx.send(Count::new(2, datetime, &counts[41..=45], true, true))
-            .unwrap();
+        all_counts.push(Count::new(2, datetime, &counts[41..=45], true, true));
         // Pine St
-        tx.send(Count::new(24, datetime, &counts[46..=48], false, true))
-            .unwrap();
+        all_counts.push(Count::new(24, datetime, &counts[46..=48], false, true));
         // Port Richmond
-        tx.send(Count::new(7, datetime, &counts[49..=53], true, true))
-            .unwrap();
+        all_counts.push(Count::new(7, datetime, &counts[49..=53], true, true));
         // Schuylkill Banks
-        tx.send(Count::new(6, datetime, &counts[54..=58], true, true))
-            .unwrap();
+        all_counts.push(Count::new(6, datetime, &counts[54..=58], true, true));
         // Spring Mill Station
-        tx.send(Count::new(13, datetime, &counts[59..=63], true, true))
-            .unwrap();
+        all_counts.push(Count::new(13, datetime, &counts[59..=63], true, true));
         // Spruce St
-        tx.send(Count::new(25, datetime, &counts[64..=66], false, true))
-            .unwrap();
+        all_counts.push(Count::new(25, datetime, &counts[64..=66], false, true));
         // Tinicum Park
-        tx.send(Count::new(23, datetime, &counts[67..=71], true, true))
-            .unwrap();
+        all_counts.push(Count::new(23, datetime, &counts[67..=71], true, true));
         // Tullytown
-        tx.send(Count::new(14, datetime, &counts[72..=76], true, true))
-            .unwrap();
+        all_counts.push(Count::new(14, datetime, &counts[72..=76], true, true));
         // US 202 Parkway Trail
-        tx.send(Count::new(9, datetime, &counts[77..=81], true, true))
-            .unwrap();
+        all_counts.push(Count::new(9, datetime, &counts[77..=81], true, true));
         // Washington Cross
-        tx.send(Count::new(15, datetime, &counts[82..=86], true, true))
-            .unwrap();
+        all_counts.push(Count::new(15, datetime, &counts[82..=86], true, true));
         // Waterfront Display
-        tx.send(Count::new(26, datetime, &counts[87..=91], true, true))
-            .unwrap();
-        tx.send(Count::new(4, datetime, &counts[92..=96], true, true))
-            .unwrap();
+        all_counts.push(Count::new(26, datetime, &counts[87..=91], true, true));
+        // Wissahickon
+        all_counts.push(Count::new(4, datetime, &counts[92..=96], true, true));
     }
 
-    // Must drop the sender, otherwise the receiver will never stop waiting for it.
-    drop(tx);
+    // Delete existing records by date.
+    dates.sort();
+    dates.dedup();
+    let conn =
+        Connection::connect(&username.clone(), &password.clone(), "dvrpcprod_tp_tls").unwrap();
+    for date in dates {
+        match conn.execute(
+            "delete from TBLCOUNTDATA where to_char(COUNTDATE, 'DD-MON-YY')=:1",
+            &[&date],
+        ) {
+            Ok(v) => println!("{:?}", v),
+            Err(e) => println!("{:?}", e),
+        }
+        conn.commit().unwrap();
+    }
 
-    // connect to Oracle
-    // Oracle env vars and connection
-    dotenvy::dotenv().expect("Unable to load .env file");
-    let username = env::var("USERNAME").expect("Unable to load username from .env file.");
-    let password = env::var("PASSWORD").expect("Unable to load password from .env file.");
+    // Create a channel, through which we'll send each individual Count from the rows
+    let (tx, rx) = channel::unbounded();
+
+    // Process data rows
+    let sender_thread_handle = thread::spawn(move || {
+        for count in all_counts {
+            println!("hello in sender thread");
+            tx.send(count).unwrap();
+        }
+    });
+
     let start = time::Instant::now();
 
     // Fork: spawn a new thread, with each one adding a receiver, taking a Count from the channel,
@@ -297,20 +306,22 @@ fn main() {
     // would do this better
     // TODO: test number of records added between each run
     const NTHREADS: usize = 20;
-    let mut thread_handles = vec![];
+    let mut receiver_thread_handles = vec![];
     for i in 0..=NTHREADS {
         let receiver = rx.clone();
         let conn = Connection::connect(&username, &password, "dvrpcprod_tp_tls").unwrap();
-        thread_handles.push(thread::spawn(move || {
+        receiver_thread_handles.push(thread::spawn(move || {
             while let Ok(received) = receiver.recv() {
-                println!("hello from {i}");
+                println!("hello from receiver {i}");
                 insert(&conn, received);
             }
+            conn.commit().unwrap();
         }));
     }
 
     // Join: wait for all threads to finish.
-    for handle in thread_handles {
+    sender_thread_handle.join().unwrap();
+    for handle in receiver_thread_handles {
         handle.join().unwrap();
     }
 
@@ -325,8 +336,6 @@ fn main() {
 }
 
 fn insert(conn: &Connection, count: Count) {
-    // TODO: delete any data matching what we're about to enter (by date/station)
-
     // convert datetime
     let oracle_dt = Timestamp::new(
         count.datetime.year(),
@@ -338,10 +347,6 @@ fn insert(conn: &Connection, count: Count) {
         0,
     );
 
-    dbg!("Got: {}", &count);
-    // for now, just dumb insert - don't check for duplicates
-
-    // how are `None`s getting entered into the database? 0 or nothing?
     conn.execute("insert into TBLCOUNTDATA (locationid, countdate, total, pedin, pedout, bikein, bikeout, counttime) values (:1, :2, :3, :4, :5, :6, :7, :8)",
         &[
             &count.location_id,
