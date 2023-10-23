@@ -1,6 +1,5 @@
 use std::env;
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions};
 use std::thread;
 use std::time;
 
@@ -8,9 +7,11 @@ use chrono::prelude::*;
 use crossbeam::channel;
 use csv::StringRecord;
 use oracle::sql_type::Timestamp;
-use oracle::{Connection, Error};
+use oracle::{Connection, Error, Statement};
+use tracing::{debug, error, info};
+use tracing_subscriber::{filter, prelude::*};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct Count {
     location_id: i32,
     datetime: NaiveDateTime,
@@ -174,26 +175,72 @@ const EXPECTED_HEADER: &[&str] = &[
 fn main() {
     /*
       TODO:
-        * add logging (continuous; separate from any report generated about outcome)
-        * error handling
+        [ ] determine notification/confirmation system
+      Stretch:
+        [ ] format time better. See <https://github.com/tokio-rs/tracing/blob/master/tracing-subscriber/src/fmt/time/time_crate.rs>
     */
 
+    // Set up logging/report.
+    let log_file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open("log.txt")
+        .expect("Unable to open log.");
+
+    // Remove any existing report file, create new one.
+    let report_filename = "report.txt";
+    fs::remove_file(report_filename).ok();
+    let report_file = File::create(report_filename).expect("Unable to open report file.");
+
+    // Configure various logs.
+    let stdout_log = tracing_subscriber::fmt::layer();
+    let log = tracing_subscriber::fmt::layer()
+        .with_writer(log_file)
+        .with_ansi(false);
+    let report = tracing_subscriber::fmt::layer()
+        .with_writer(report_file)
+        .with_ansi(false);
+
+    // stdout/log get everything, excluding those whose name contains "report_only"
+    // report gets everything INFO and above (so not DEBUG or TRACE)
+    tracing_subscriber::registry()
+        .with(
+            stdout_log
+                .with_filter(filter::filter_fn(|metadata| {
+                    !metadata.name().contains("report_only")
+                }))
+                .and_then(log),
+        )
+        .with(report.with_filter(filter::LevelFilter::INFO))
+        .init();
+
+    debug!("Import started.");
+
     // Oracle env vars
-    dotenvy::dotenv().expect("Unable to load .env file");
-    let username = env::var("USERNAME").expect("Unable to load username from .env file.");
-    let password = env::var("PASSWORD").expect("Unable to load password from .env file.");
-    // Remove any existing error file, create new one to hold errors.
-    let error_filename = "errors.txt";
-    fs::remove_file(error_filename).ok();
-    let mut error_file = File::create(error_filename).expect("Unable to open file to hold errors.");
+    if let Err(e) = dotenvy::dotenv() {
+        error!("Unable to load .env file: {e}.");
+        return;
+    }
+    let username = match env::var("USERNAME") {
+        Ok(v) => v,
+        Err(e) => {
+            error!("Unable to load username from .env file: {e}.");
+            return;
+        }
+    };
+    let password = match env::var("PASSWORD") {
+        Ok(v) => v,
+        Err(e) => {
+            error!("Unable to load password from .env file: {e}.");
+            return;
+        }
+    };
 
     // Create CSV reader over file, verify header is what we expect it to be.
     let data_file = match File::open("export.csv") {
         Ok(v) => v,
         Err(e) => {
-            error_file
-                .write_all(format!("Unable to open data file: {e}").as_bytes())
-                .unwrap();
+            error!("Unable to open data file: {e}");
             return;
         }
     };
@@ -203,12 +250,22 @@ fn main() {
         .from_reader(data_file);
 
     let expected_header = StringRecord::from(EXPECTED_HEADER);
-    let header: StringRecord = rdr.records().skip(1).take(1).next().unwrap().unwrap();
+    let header: StringRecord = match rdr.records().skip(1).take(1).next() {
+        Some(v) => match v {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Could not parse header: {e}");
+                return;
+            }
+        },
+        None => {
+            error!("Header not found.");
+            return;
+        }
+    };
 
     if header != expected_header {
-        error_file
-            .write_all(b"Header in file does not match expected header.")
-            .unwrap();
+        error!("Header file does match expected header.");
         return;
     }
 
@@ -223,11 +280,24 @@ fn main() {
     let mut all_counts = vec![];
 
     for result in rdr.records() {
-        let record = result.unwrap();
+        let record = match result {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Could not row from CSV: {e}.");
+                return;
+            }
+        };
 
         // Extract date from datetime, in the format our database expects (DD-MON-YY).
         let datetime = &record[0];
-        let datetime = NaiveDateTime::parse_from_str(datetime, "%b %e, %Y %l:%M %p").unwrap();
+        let datetime = match NaiveDateTime::parse_from_str(datetime, "%b %e, %Y %l:%M %p") {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Could not parse date ({datetime}) from record: {e}.");
+                return;
+            }
+        };
+
         dates.push(datetime.format("%d-%b-%y").to_string().to_uppercase());
 
         // Extract everything, by particular location/count, converting to Options from &str.
@@ -280,19 +350,28 @@ fn main() {
     // Delete existing records by date.
     dates.sort();
     dates.dedup();
-    let conn =
-        Connection::connect(&username.clone(), &password.clone(), "dvrpcprod_tp_tls").unwrap();
+    let conn = match Connection::connect(&username.clone(), &password.clone(), "dvrpcprod_tp_tls") {
+        Ok(v) => v,
+        Err(e) => {
+            error!("Unable to establish connection with db: {e}");
+            return;
+        }
+    };
     for date in dates {
         if let Err(e) = conn.execute(
             "delete from TBLCOUNTDATA where to_char(COUNTDATE, 'DD-MON-YY')=:1",
             &[&date],
         ) {
-            error_file
-                .write_all(format!("Error deleting existing records from db: {e}").as_bytes())
-                .expect("Could not write to error file.");
+            error!("Error deleting existing records from db for {date}: {e}");
             return;
         }
-        conn.commit().unwrap();
+        match conn.commit() {
+            Ok(_) => (),
+            Err(e) => {
+                error!("Error committing deletion of existing records from db for {date}: {e}");
+                return;
+            }
+        }
     }
 
     // Create a channel to handle moving data into threads
@@ -301,7 +380,13 @@ fn main() {
     // Create thread to send Counts through the channel
     let sender_thread_handle = thread::spawn(move || {
         for count in all_counts {
-            tx.send(count).unwrap();
+            match tx.send(count) {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("Error sending data to channel: {e}.");
+                    return;
+                }
+            }
         }
     });
 
@@ -309,35 +394,64 @@ fn main() {
 
     // Fork: spawn new threads, with each one adding a receiver, taking a Count from the channel,
     // and inserting it into the database.
+    debug!("Creating receiver threads");
     let mut receiver_thread_handles = vec![];
     for _ in 0..=20 {
         let receiver = rx.clone();
-        let conn = Connection::connect(&username, &password, "dvrpcprod_tp_tls").unwrap();
+        let conn =
+            match Connection::connect(&username.clone(), &password.clone(), "dvrpcprod_tp_tls") {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Unable to establish connection with db: {e}");
+                    return;
+                }
+            };
         receiver_thread_handles.push(thread::spawn(move || {
             while let Ok(count) = receiver.recv() {
-                insert(&conn, count);
+                match insert(&conn, count) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        error!("Could not insert count: {e}");
+                        return;
+                    }
+                }
             }
-            conn.commit().unwrap();
+            match conn.commit() {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("Error committing to database: {e}.");
+                    return;
+                }
+            }
         }));
     }
 
     // Join: wait for all threads to finish.
-    sender_thread_handle.join().unwrap();
+    match sender_thread_handle.join() {
+        Ok(_) => (),
+        Err(e) => {
+            error!("Error joining sender thread: {:?}.", e);
+            return;
+        }
+    }
     for handle in receiver_thread_handles {
-        handle.join().unwrap();
+        match handle.join() {
+            Ok(_) => (),
+            Err(e) => {
+                error!("Error joining receiver thread: {:?}.", e);
+                return;
+            }
+        }
     }
 
-    println!("{:?}", start.elapsed());
+    // If we've made it here, it's been successful, generate a successul report.
+    info!(name: "report_only", "Import completely successfully.");
 
-    // TODO: determine notification/confirmation system
-
-    // If error file is empty, rm it
-    if fs::read_to_string(error_filename).unwrap().is_empty() {
-        fs::remove_file(error_filename).ok();
-    }
+    // Add elapsed time to both report and log
+    info!("Elapsed time: {:?}", start.elapsed());
 }
 
-fn insert(conn: &Connection, count: Count) {
+fn insert(conn: &Connection, count: Count) -> Result<Statement, Error> {
     // convert datetime
     let oracle_dt = Timestamp::new(
         count.datetime.year(),
@@ -360,5 +474,5 @@ fn insert(conn: &Connection, count: Count) {
             &count.bike_out,
             &oracle_dt,
         ],
-    ).unwrap();
+    )
 }
