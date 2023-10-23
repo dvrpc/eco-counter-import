@@ -1,5 +1,9 @@
 use std::env;
 use std::fs::{self, File, OpenOptions};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use std::thread;
 use std::time;
 
@@ -214,6 +218,8 @@ fn main() {
         .with(report.with_filter(filter::LevelFilter::INFO))
         .init();
 
+    // Elapsed time will be logged.
+    let start = time::Instant::now();
     debug!("Import started.");
 
     // Oracle env vars
@@ -276,6 +282,7 @@ fn main() {
       Separating the delete/insertion allows for far fewer deletes (one per day of month rather
       than one per record).
     */
+    debug!("Extracting counts from CSV file.");
     let mut dates = vec![];
     let mut all_counts = vec![];
 
@@ -347,7 +354,7 @@ fn main() {
         all_counts.push(Count::new(4, datetime, &counts[92..=96], true, true));
     }
 
-    // Delete existing records by date.
+    debug!("Deleting all existing records with same date.");
     dates.sort();
     dates.dedup();
     let conn = match Connection::connect(&username.clone(), &password.clone(), "dvrpcprod_tp_tls") {
@@ -390,13 +397,13 @@ fn main() {
         }
     });
 
-    let start = time::Instant::now();
-
     // Fork: spawn new threads, with each one adding a receiver, taking a Count from the channel,
     // and inserting it into the database.
-    debug!("Creating receiver threads");
+    debug!("Inserting counts into database.");
     let mut receiver_thread_handles = vec![];
-    for _ in 0..=20 {
+    let num_inserts = Arc::new(AtomicUsize::new(0));
+    for _ in 0..20 {
+        let num_inserts = num_inserts.clone();
         let receiver = rx.clone();
         let conn =
             match Connection::connect(&username.clone(), &password.clone(), "dvrpcprod_tp_tls") {
@@ -415,6 +422,8 @@ fn main() {
                         return;
                     }
                 }
+                // Increment number of counts (for reporting).
+                num_inserts.fetch_add(1, Ordering::Relaxed);
             }
             match conn.commit() {
                 Ok(_) => (),
@@ -444,10 +453,8 @@ fn main() {
         }
     }
 
-    // If we've made it here, it's been successful, generate a successul report.
-    info!(name: "report_only", "Import completely successfully.");
-
-    // Add elapsed time to both report and log
+    info!(name: "report_only", "Import completed successfully.");
+    info!("{:?} counts inserted.", num_inserts);
     info!("Elapsed time: {:?}", start.elapsed());
 }
 
