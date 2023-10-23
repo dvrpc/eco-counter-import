@@ -11,7 +11,7 @@ use chrono::prelude::*;
 use crossbeam::channel;
 use csv::StringRecord;
 use oracle::sql_type::Timestamp;
-use oracle::{Connection, Error, Statement};
+use oracle::{pool::PoolBuilder, Connection, Error, Statement};
 use tracing::{debug, error, info};
 use tracing_subscriber::{filter, prelude::*};
 
@@ -357,14 +357,13 @@ fn main() {
     debug!("Deleting all existing records with same date.");
     dates.sort();
     dates.dedup();
-    let conn = match Connection::connect(&username.clone(), &password.clone(), "dvrpcprod_tp_tls") {
-        Ok(v) => v,
-        Err(e) => {
-            error!("Unable to establish connection with db: {e}");
-            return;
-        }
-    };
+    let pool = PoolBuilder::new(username.clone(), password.clone(), "dvrpcprod_tp_tls")
+        .max_connections(50)
+        .build()
+        .unwrap();
+
     for date in dates {
+        let conn = pool.get().unwrap();
         if let Err(e) = conn.execute(
             "delete from TBLCOUNTDATA where to_char(COUNTDATE, 'DD-MON-YY')=:1",
             &[&date],
@@ -405,14 +404,7 @@ fn main() {
     for _ in 0..20 {
         let num_inserts = num_inserts.clone();
         let receiver = rx.clone();
-        let conn =
-            match Connection::connect(&username.clone(), &password.clone(), "dvrpcprod_tp_tls") {
-                Ok(v) => v,
-                Err(e) => {
-                    error!("Unable to establish connection with db: {e}");
-                    return;
-                }
-            };
+        let conn = pool.get().unwrap();
         receiver_thread_handles.push(thread::spawn(move || {
             while let Ok(count) = receiver.recv() {
                 match insert(&conn, count) {
