@@ -362,19 +362,34 @@ fn main() {
         .build()
         .unwrap();
 
+    // Create threads to delete all rows associated with each date
+    let mut delete_thread_handles = vec![];
     for date in dates {
         let conn = pool.get().unwrap();
-        if let Err(e) = conn.execute(
-            "delete from TBLCOUNTDATA where to_char(COUNTDATE, 'DD-MON-YY')=:1",
-            &[&date],
-        ) {
-            error!("Error deleting existing records from db for {date}: {e}");
-            return;
-        }
-        match conn.commit() {
+        delete_thread_handles.push(thread::spawn(move || {
+            if let Err(e) = conn.execute(
+                "delete from TBLCOUNTDATA where to_char(COUNTDATE, 'DD-MON-YY')=:1",
+                &[&date],
+            ) {
+                error!("Error deleting existing records from db for {date}: {e}");
+                return;
+            }
+
+            match conn.commit() {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("Error committing deletion of existing records from db: {e}");
+                    return;
+                }
+            }
+        }));
+    }
+
+    for handle in delete_thread_handles {
+        match handle.join() {
             Ok(_) => (),
             Err(e) => {
-                error!("Error committing deletion of existing records from db for {date}: {e}");
+                error!("Error joining delete thread: {:?}.", e);
                 return;
             }
         }
