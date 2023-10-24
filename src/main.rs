@@ -1,4 +1,5 @@
 use std::env;
+use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -11,7 +12,7 @@ use chrono::prelude::*;
 use crossbeam::channel;
 use csv::StringRecord;
 use oracle::sql_type::Timestamp;
-use oracle::{pool::PoolBuilder, Connection, Error, Statement};
+use oracle::{pool::PoolBuilder, Connection, Error as OracleError, Statement};
 use tracing::{debug, error, info};
 use tracing_subscriber::{filter, prelude::*};
 
@@ -33,7 +34,7 @@ impl Count {
         counts: &[Option<i32>],
         ped: bool,
         bike: bool,
-    ) -> Self {
+    ) -> Result<Count, CountError> {
         let mut ped_in = None;
         let mut ped_out = None;
         let mut bike_in = None;
@@ -42,17 +43,20 @@ impl Count {
         // `counts` is a slice from the whole row, starting with total (index 0) and followed by
         // either a ped or bike pair (in/out) or both (usually both)
 
-        // Both ped and bike
         if counts.len() == 5 {
-            // maybe assert that both bike and ped are true?
+            if !bike && !ped {
+                error!("{}", CountError::TooMany);
+                return Err(CountError::TooMany);
+            }
             ped_in = counts[1];
             ped_out = counts[2];
             bike_in = counts[3];
             bike_out = counts[4];
         } else if counts.len() == 3 {
-            // if bike && ped {
-            //     // this would be an error
-            // }
+            if bike && ped {
+                error!("{}", CountError::TooFew);
+                return Err(CountError::TooFew);
+            }
             if ped && !bike {
                 ped_in = counts[1];
                 ped_out = counts[2];
@@ -61,9 +65,12 @@ impl Count {
                 bike_in = counts[1];
                 bike_out = counts[2];
             }
+        } else {
+            error!("{}", CountError::UnexpectedNumber);
+            return Err(CountError::UnexpectedNumber);
         }
 
-        Self {
+        Ok(Self {
             location_id,
             datetime,
             total: counts[0],
@@ -71,6 +78,30 @@ impl Count {
             ped_out,
             bike_in,
             bike_out,
+        })
+    }
+}
+
+// This will catch any misconfiguration between the bools/counts provided in new().
+#[derive(Debug)]
+enum CountError {
+    TooFew,
+    TooMany,
+    UnexpectedNumber,
+}
+
+impl fmt::Display for CountError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CountError::TooFew => {
+                write!(f, "Misconfiguration of count: expected more fields.")
+            }
+            CountError::TooMany => {
+                write!(f, "Misconfiguration of count: expected fewer fields.")
+            }
+            CountError::UnexpectedNumber => {
+                write!(f, "Expected 3 or 5 fields, got different amount.")
+            }
         }
     }
 }
@@ -179,9 +210,9 @@ const EXPECTED_HEADER: &[&str] = &[
 fn main() {
     /*
       TODO:
+        [ ] can this be run constantly - detect if export.csv is in expected location, run if so,
+        otherwise just idle? (rather than be run nightly with cronjob)
         [ ] determine notification/confirmation system
-      Stretch:
-        [ ] format time better. See <https://github.com/tokio-rs/tracing/blob/master/tracing-subscriber/src/fmt/time/time_crate.rs>
     */
 
     // Set up logging/report.
@@ -312,54 +343,59 @@ fn main() {
             .iter()
             .map(|v| v.parse::<i32>().ok())
             .collect::<Vec<_>>();
+
+        // Create counts. If error, log (via new()/CountError) and panic.
         // Bartram
-        all_counts.push(Count::new(16, datetime, &counts[1..=5], true, true));
+        all_counts.push(Count::new(16, datetime, &counts[1..=5], true, true).unwrap());
         // Chester Valley Trail
-        all_counts.push(Count::new(1, datetime, &counts[6..=10], true, true));
+        all_counts.push(Count::new(1, datetime, &counts[6..=10], true, true).unwrap());
         // Cooper River Trail
-        all_counts.push(Count::new(11, datetime, &counts[11..=15], true, true));
+        all_counts.push(Count::new(11, datetime, &counts[11..=15], true, true).unwrap());
         // Cynwyd Heritage Trail
-        all_counts.push(Count::new(3, datetime, &counts[16..=20], true, true));
+        all_counts.push(Count::new(3, datetime, &counts[16..=20], true, true).unwrap());
         // Darby Creek Trail
-        all_counts.push(Count::new(12, datetime, &counts[21..=25], true, true));
+        all_counts.push(Count::new(12, datetime, &counts[21..=25], true, true).unwrap());
         // Kelly Dr
-        all_counts.push(Count::new(5, datetime, &counts[26..=30], true, true));
+        all_counts.push(Count::new(5, datetime, &counts[26..=30], true, true).unwrap());
         // Lawrence Hopewell trail
-        all_counts.push(Count::new(8, datetime, &counts[31..=35], true, true));
+        all_counts.push(Count::new(8, datetime, &counts[31..=35], true, true).unwrap());
         // Monroe Twp
-        all_counts.push(Count::new(10, datetime, &counts[36..=40], true, true));
+        all_counts.push(Count::new(10, datetime, &counts[36..=40], true, true).unwrap());
         // Pawlings Rd
-        all_counts.push(Count::new(2, datetime, &counts[41..=45], true, true));
+        all_counts.push(Count::new(2, datetime, &counts[41..=45], true, true).unwrap());
         // Pine St
-        all_counts.push(Count::new(24, datetime, &counts[46..=48], false, true));
+        all_counts.push(Count::new(24, datetime, &counts[46..=48], false, true).unwrap());
         // Port Richmond
-        all_counts.push(Count::new(7, datetime, &counts[49..=53], true, true));
+        all_counts.push(Count::new(7, datetime, &counts[49..=53], true, true).unwrap());
         // Schuylkill Banks
-        all_counts.push(Count::new(6, datetime, &counts[54..=58], true, true));
+        all_counts.push(Count::new(6, datetime, &counts[54..=58], true, true).unwrap());
         // Spring Mill Station
-        all_counts.push(Count::new(13, datetime, &counts[59..=63], true, true));
+        all_counts.push(Count::new(13, datetime, &counts[59..=63], true, true).unwrap());
         // Spruce St
-        all_counts.push(Count::new(25, datetime, &counts[64..=66], false, true));
+        all_counts.push(Count::new(25, datetime, &counts[64..=66], false, true).unwrap());
         // Tinicum Park
-        all_counts.push(Count::new(23, datetime, &counts[67..=71], true, true));
+        all_counts.push(Count::new(23, datetime, &counts[67..=71], true, true).unwrap());
         // Tullytown
-        all_counts.push(Count::new(14, datetime, &counts[72..=76], true, true));
+        all_counts.push(Count::new(14, datetime, &counts[72..=76], true, true).unwrap());
         // US 202 Parkway Trail
-        all_counts.push(Count::new(9, datetime, &counts[77..=81], true, true));
+        all_counts.push(Count::new(9, datetime, &counts[77..=81], true, true).unwrap());
         // Washington Cross
-        all_counts.push(Count::new(15, datetime, &counts[82..=86], true, true));
+        all_counts.push(Count::new(15, datetime, &counts[82..=86], true, true).unwrap());
         // Waterfront Display
-        all_counts.push(Count::new(26, datetime, &counts[87..=91], true, true));
+        all_counts.push(Count::new(26, datetime, &counts[87..=91], true, true).unwrap());
         // Wissahickon Trail
-        all_counts.push(Count::new(4, datetime, &counts[92..=96], true, true));
+        all_counts.push(Count::new(4, datetime, &counts[92..=96], true, true).unwrap());
     }
 
     debug!("Deleting all existing records with same date.");
     dates.sort();
     dates.dedup();
+
+    // Create connection pool; if error, log and panic.
     let pool = PoolBuilder::new(username.clone(), password.clone(), "dvrpcprod_tp_tls")
         .max_connections(50)
         .build()
+        .map_err(|e| error!("Unable to create connection pool: {e}"))
         .unwrap();
 
     // Create threads to delete all rows associated with each date
@@ -367,32 +403,28 @@ fn main() {
     for date in dates {
         let conn = pool.get().unwrap();
         delete_thread_handles.push(thread::spawn(move || {
-            if let Err(e) = conn.execute(
+            // Delete. If error, log it and then propagate it to main thread.
+            conn.execute(
                 "delete from TBLCOUNTDATA where to_char(COUNTDATE, 'DD-MON-YY')=:1",
                 &[&date],
-            ) {
+            )
+            .map_err(|e| {
                 error!("Error deleting existing records from db for {date}: {e}");
-                return;
-            }
+            })
+            .unwrap();
 
-            match conn.commit() {
-                Ok(_) => (),
-                Err(e) => {
-                    error!("Error committing deletion of existing records from db: {e}");
-                    return;
-                }
-            }
+            // Commit. If error, log it and then propagate it to main thread.
+            conn.commit()
+                .map_err(|e| {
+                    error!("Error committing deletion of existing record for {date} from db: {e}")
+                })
+                .unwrap();
         }));
     }
 
+    // Join: wait for delete threads to finish, panicking on any errors.
     for handle in delete_thread_handles {
-        match handle.join() {
-            Ok(_) => (),
-            Err(e) => {
-                error!("Error joining delete thread: {:?}.", e);
-                return;
-            }
-        }
+        handle.join().unwrap();
     }
 
     // Create a channel to handle moving data into threads
@@ -422,50 +454,39 @@ fn main() {
         let conn = pool.get().unwrap();
         receiver_thread_handles.push(thread::spawn(move || {
             while let Ok(count) = receiver.recv() {
-                match insert(&conn, count) {
-                    Ok(_) => (),
-                    Err(e) => {
+                // Insert. If error, log it and then propagate it to main thread.
+                insert(&conn, count)
+                    .map_err(|e| {
                         error!("Could not insert count: {e}");
-                        return;
-                    }
-                }
+                    })
+                    .unwrap();
+
                 // Increment number of counts (for reporting).
                 num_inserts.fetch_add(1, Ordering::Relaxed);
             }
-            match conn.commit() {
-                Ok(_) => (),
-                Err(e) => {
-                    error!("Error committing to database: {e}.");
-                    return;
-                }
-            }
+
+            // Commit. If error, log it and then propagate it to main thread.
+            conn.commit()
+                .map_err(|e| error!("Error committing insert to database: {e}"))
+                .unwrap();
         }));
     }
 
-    // Join: wait for all threads to finish.
-    match sender_thread_handle.join() {
-        Ok(_) => (),
-        Err(e) => {
-            error!("Error joining sender thread: {:?}.", e);
-            return;
-        }
-    }
+    // Join: wait for insert sender/receiver threads to finish, panicking on any errors.
+    sender_thread_handle.join().unwrap();
     for handle in receiver_thread_handles {
-        match handle.join() {
-            Ok(_) => (),
-            Err(e) => {
-                error!("Error joining receiver thread: {:?}.", e);
-                return;
-            }
-        }
+        handle.join().unwrap();
     }
 
     info!(name: "report_only", "Import completed successfully.");
     info!("{:?} counts inserted.", num_inserts);
     info!("Elapsed time: {:?}", start.elapsed());
+
+    // Remove the csv
+    fs::remove_file("export.csv").ok();
 }
 
-fn insert(conn: &Connection, count: Count) -> Result<Statement, Error> {
+fn insert(conn: &Connection, count: Count) -> Result<Statement, OracleError> {
     // convert datetime
     let oracle_dt = Timestamp::new(
         count.datetime.year(),
