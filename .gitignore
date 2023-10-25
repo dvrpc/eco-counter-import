@@ -1,4 +1,4 @@
 /target
-/spreadsheets
 .env
+log.txt
 Cargo.lock
