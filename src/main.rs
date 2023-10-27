@@ -209,9 +209,15 @@ const EXPECTED_HEADER: &[&str] = &[
 const TIME_BETWEEN_LOOPS: u64 = 15;
 
 fn main() {
-    // Set up logging.
-    let config = ConfigBuilder::new().set_time_format_rfc3339().build();
+    // Load file containing environment variables, panic if it doesn't exist.
+    dotenvy::dotenv().expect("Unable to load .env file.");
 
+    // Get env var for path where CSV and log will be, panic if it doesn't exist.
+    let storage_path =
+        env::var("PATH_TO_CSV_AND_LOG").expect("Unable to load storage path from .env file.");
+
+    // Set up logging, panic if it fails.
+    let config = ConfigBuilder::new().set_time_format_rfc3339().build();
     CombinedLogger::init(vec![
         TermLogger::new(
             LevelFilter::Debug,
@@ -225,15 +231,31 @@ fn main() {
             OpenOptions::new()
                 .append(true)
                 .create(true)
-                .open("log.txt")
+                .open(format!("{storage_path}/log.txt"))
                 .expect("Could not open log file."),
         ),
     ])
     .expect("Could not configure logging.");
 
+    // Oracle env vars
+    let username = match env::var("USERNAME") {
+        Ok(v) => v,
+        Err(e) => {
+            error!("Unable to load username from .env file: {e}.");
+            return;
+        }
+    };
+    let password = match env::var("PASSWORD") {
+        Ok(v) => v,
+        Err(e) => {
+            error!("Unable to load password from .env file: {e}.");
+            return;
+        }
+    };
+
     loop {
         // Open CSV file and create reader over it, or wait and try again
-        let data_file = match File::open("export.csv") {
+        let data_file = match File::open(format!("{storage_path}/export.csv")) {
             Ok(v) => v,
             Err(_) => {
                 debug!("CSV file not located to import data from.");
@@ -245,26 +267,6 @@ fn main() {
         // Elapsed time will be logged.
         let start = time::Instant::now();
         info!("Import started.");
-
-        // Oracle env vars
-        if let Err(e) = dotenvy::dotenv() {
-            error!("Unable to load .env file: {e}.");
-            return;
-        }
-        let username = match env::var("USERNAME") {
-            Ok(v) => v,
-            Err(e) => {
-                error!("Unable to load username from .env file: {e}.");
-                return;
-            }
-        };
-        let password = match env::var("PASSWORD") {
-            Ok(v) => v,
-            Err(e) => {
-                error!("Unable to load password from .env file: {e}.");
-                return;
-            }
-        };
 
         // Create CSV reader over file, verify header is what we expect it to be.
         let mut rdr = csv::ReaderBuilder::new()
