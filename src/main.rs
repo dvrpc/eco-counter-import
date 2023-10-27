@@ -484,7 +484,7 @@ fn main() {
         info!("Elapsed time: {:?}", start.elapsed());
 
         // Remove the csv
-        fs::remove_file("export.csv").ok();
+        fs::remove_file(format!("{storage_path}/export.csv")).ok();
 
         // Wait to try again
         thread::sleep(time::Duration::from_secs(TIME_BETWEEN_LOOPS));
