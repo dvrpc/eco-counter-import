@@ -14,9 +14,11 @@ use csv::StringRecord;
 use log::{debug, error, info};
 use oracle::sql_type::Timestamp;
 use oracle::{pool::PoolBuilder, Connection, Error as OracleError, Statement};
+use polars::df;
+use polars::prelude::*;
 use simplelog::*;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Count {
     location_id: i32,
     datetime: NaiveDateTime,
@@ -375,6 +377,64 @@ fn main() {
             all_counts.push(Count::new(4, datetime, &counts[92..=96], true, true).unwrap());
         }
 
+        // Aggregate counts by location_id and count
+        // macro from <https://stackoverflow.com/a/76393566/6169671>
+        macro_rules! struct_to_dataframe {
+            ($input:expr, [$($field:ident),+]) => {
+                {
+                    // Extract the field values into separate vectors
+                    $(let mut $field = Vec::new();)*
+
+                    for e in $input.into_iter() {
+                        $($field.push(e.$field);)*
+                    }
+                    df! {
+                        $(stringify!($field) => $field,)*
+                    }
+                }
+            };
+        }
+
+        let all_counts_df = struct_to_dataframe!(
+            all_counts.clone(),
+            [
+                location_id,
+                datetime,
+                total,
+                ped_in,
+                ped_out,
+                bike_in,
+                bike_out
+            ]
+        )
+        .unwrap();
+
+        // Cast datetime as date, sum pedin/out and bike/out
+        let daily_counts_df = all_counts_df
+            .clone()
+            .lazy()
+            .with_columns([
+                col("location_id"),
+                col("datetime").cast(DataType::Date).alias("date"),
+                col("total"),
+                (col("ped_in") + col("ped_out")).alias("ped_total"),
+                (col("bike_in") + col("bike_out")).alias("bike_total"),
+            ])
+            .group_by(["location_id", "date"])
+            .agg([
+                col("ped_total").sum(),
+                col("bike_total").sum(),
+                col("total").sum(),
+            ])
+            .collect()
+            .unwrap();
+
+        let daily_counts: Vec<_> = daily_counts_df.iter().collect();
+
+        dbg!(daily_counts);
+
+        // todo: insert converted into tblheader
+
         info!("Deleting all existing records with same date.");
         dates.sort();
         dates.dedup();
@@ -456,7 +516,7 @@ fn main() {
             receiver_thread_handles.push(thread::spawn(move || {
                 while let Ok(count) = receiver.recv() {
                     // Insert. If error, log it and then propagate it to main thread.
-                    insert(&conn, count)
+                    insert_count(&conn, count)
                         .map_err(|e| {
                             error!("Could not insert count: {e}");
                         })
@@ -491,7 +551,7 @@ fn main() {
     }
 }
 
-fn insert(conn: &Connection, count: Count) -> Result<Statement, OracleError> {
+fn insert_count(conn: &Connection, count: Count) -> Result<Statement, OracleError> {
     // convert datetime
     let oracle_dt = Timestamp::new(
         count.datetime.year(),
