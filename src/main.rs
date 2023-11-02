@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -14,8 +15,6 @@ use csv::StringRecord;
 use log::{debug, error, info};
 use oracle::sql_type::Timestamp;
 use oracle::{pool::PoolBuilder, Connection, Error as OracleError, Statement};
-use polars::df;
-use polars::prelude::*;
 use simplelog::*;
 
 #[derive(Debug, Clone)]
@@ -377,61 +376,83 @@ fn main() {
             all_counts.push(Count::new(4, datetime, &counts[92..=96], true, true).unwrap());
         }
 
-        // Aggregate counts by location_id and count
-        // macro from <https://stackoverflow.com/a/76393566/6169671>
-        macro_rules! struct_to_dataframe {
-            ($input:expr, [$($field:ident),+]) => {
-                {
-                    // Extract the field values into separate vectors
-                    $(let mut $field = Vec::new();)*
+        // Now take this data in `all_counts`, and sum by date/location_id
+        let mut daily_counts = HashMap::new();
 
-                    for e in $input.into_iter() {
-                        $($field.push(e.$field);)*
-                    }
-                    df! {
-                        $(stringify!($field) => $field,)*
-                    }
+        for count in all_counts.clone() {
+            let date = count.datetime.date();
+
+            // running_xxx are the running totals that are (possibly) updated on each loop
+            let (running_ped, running_bike, running_total) = daily_counts
+                .entry((count.location_id, date))
+                .or_insert((None, None, None));
+
+            // sum ped in/out
+            let mut ped_total = None;
+
+            if let Some(v) = count.ped_in {
+                ped_total = Some(v);
+            }
+            if let Some(v) = count.ped_out {
+                if let Some(w) = ped_total {
+                    ped_total = Some(w + v)
+                } else {
+                    ped_total = Some(v)
                 }
-            };
+            }
+            // now add it to our running sum
+            if let Some(v) = ped_total {
+                if let Some(w) = running_ped {
+                    *w += v
+                } else {
+                    *running_ped = Some(v)
+                }
+            }
+
+            // sum bike in/out
+            let mut bike_total = None;
+
+            if let Some(v) = count.bike_in {
+                bike_total = Some(v);
+            }
+            if let Some(v) = count.bike_out {
+                if let Some(w) = bike_total {
+                    bike_total = Some(w + v)
+                } else {
+                    bike_total = Some(v)
+                }
+            }
+            // now add it to our running sum
+            if let Some(v) = bike_total {
+                if let Some(w) = running_bike {
+                    *w += v
+                } else {
+                    *running_bike = Some(v)
+                }
+            }
+
+            // sum total
+            let mut total: Option<i32> = None;
+
+            if let Some(v) = count.total {
+                total = Some(v);
+            }
+            // add total to running total
+            if let Some(v) = total {
+                if let Some(w) = running_total {
+                    *w += v
+                } else {
+                    *running_total = Some(v)
+                }
+            }
         }
 
-        let all_counts_df = struct_to_dataframe!(
-            all_counts.clone(),
-            [
-                location_id,
-                datetime,
-                total,
-                ped_in,
-                ped_out,
-                bike_in,
-                bike_out
-            ]
-        )
-        .unwrap();
-
-        // Cast datetime as date, sum pedin/out and bike/out
-        let daily_counts_df = all_counts_df
-            .clone()
-            .lazy()
-            .with_columns([
-                col("location_id"),
-                col("datetime").cast(DataType::Date).alias("date"),
-                col("total"),
-                (col("ped_in") + col("ped_out")).alias("ped_total"),
-                (col("bike_in") + col("bike_out")).alias("bike_total"),
-            ])
-            .group_by(["location_id", "date"])
-            .agg([
-                col("ped_total").sum(),
-                col("bike_total").sum(),
-                col("total").sum(),
-            ])
-            .collect()
-            .unwrap();
-
-        let daily_counts: Vec<_> = daily_counts_df.iter().collect();
-
-        dbg!(daily_counts);
+        // Flatten that hashmap into a vec.
+        let mut flattened_daily_counts = vec![];
+        for ((location_id, date), (ped_total, bike_total, total)) in daily_counts {
+            flattened_daily_counts.push((location_id, date, ped_total, bike_total, total));
+        }
+        dbg!(flattened_daily_counts);
 
         // todo: insert converted into tblheader
 
@@ -462,13 +483,23 @@ fn main() {
                 }
             };
             delete_thread_handles.push(thread::spawn(move || {
-                // Delete. If error, log it and then propagate it to main thread.
+                // Delete from TBLCOUNTDATA and TBLHEADER.
+                // If error, log it and then propagate it to main thread.
                 conn.execute(
                     "delete from TBLCOUNTDATA where to_char(COUNTDATE, 'DD-MON-YY')=:1",
                     &[&date],
                 )
                 .map_err(|e| {
-                    error!("Error deleting existing records from db for {date}: {e}");
+                    error!("Error deleting existing records from TBLCOUNTDATA for {date}: {e}");
+                })
+                .unwrap();
+
+                conn.execute(
+                    "delete from TBLHEADER where to_char(COUNTDATE, 'DD-MON-YY')=:1",
+                    &[&date],
+                )
+                .map_err(|e| {
+                    error!("Error deleting existing records from TBLHEADER for {date}: {e}");
                 })
                 .unwrap();
 
