@@ -18,7 +18,7 @@ use oracle::{pool::PoolBuilder, Connection, Error as OracleError, Statement};
 use simplelog::*;
 
 #[derive(Debug, Clone)]
-struct Count {
+struct IndividualCount {
     location_id: i32,
     datetime: NaiveDateTime,
     total: Option<i32>,
@@ -28,14 +28,14 @@ struct Count {
     bike_out: Option<i32>,
 }
 
-impl Count {
+impl IndividualCount {
     fn new(
         location_id: i32,
         datetime: NaiveDateTime,
         counts: &[Option<i32>],
         ped: bool,
         bike: bool,
-    ) -> Result<Count, CountError> {
+    ) -> Result<IndividualCount, CountError> {
         let mut ped_in = None;
         let mut ped_out = None;
         let mut bike_in = None;
@@ -102,6 +102,33 @@ impl fmt::Display for CountError {
             CountError::UnexpectedNumber => {
                 write!(f, "Expected 3 or 5 fields, got different amount.")
             }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AggregatedCount {
+    location_id: i32,
+    date: NaiveDate,
+    total_ped: Option<i32>,
+    total_bike: Option<i32>,
+    total: Option<i32>,
+}
+
+impl AggregatedCount {
+    fn new(
+        location_id: i32,
+        date: NaiveDate,
+        total_ped: Option<i32>,
+        total_bike: Option<i32>,
+        total: Option<i32>,
+    ) -> Self {
+        Self {
+            location_id,
+            date,
+            total_ped,
+            total_bike,
+            total,
         }
     }
 }
@@ -335,45 +362,65 @@ fn main() {
 
             // Create counts. If error, log (via new()/CountError) and panic.
             // Bartram
-            all_counts.push(Count::new(16, datetime, &counts[1..=5], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(16, datetime, &counts[1..=5], true, true).unwrap());
             // Chester Valley Trail
-            all_counts.push(Count::new(1, datetime, &counts[6..=10], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(1, datetime, &counts[6..=10], true, true).unwrap());
             // Cooper River Trail
-            all_counts.push(Count::new(11, datetime, &counts[11..=15], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(11, datetime, &counts[11..=15], true, true).unwrap());
             // Cynwyd Heritage Trail
-            all_counts.push(Count::new(3, datetime, &counts[16..=20], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(3, datetime, &counts[16..=20], true, true).unwrap());
             // Darby Creek Trail
-            all_counts.push(Count::new(12, datetime, &counts[21..=25], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(12, datetime, &counts[21..=25], true, true).unwrap());
             // Kelly Dr
-            all_counts.push(Count::new(5, datetime, &counts[26..=30], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(5, datetime, &counts[26..=30], true, true).unwrap());
             // Lawrence Hopewell trail
-            all_counts.push(Count::new(8, datetime, &counts[31..=35], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(8, datetime, &counts[31..=35], true, true).unwrap());
             // Monroe Twp
-            all_counts.push(Count::new(10, datetime, &counts[36..=40], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(10, datetime, &counts[36..=40], true, true).unwrap());
             // Pawlings Rd
-            all_counts.push(Count::new(2, datetime, &counts[41..=45], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(2, datetime, &counts[41..=45], true, true).unwrap());
             // Pine St
-            all_counts.push(Count::new(24, datetime, &counts[46..=48], false, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(24, datetime, &counts[46..=48], false, true).unwrap());
             // Port Richmond
-            all_counts.push(Count::new(7, datetime, &counts[49..=53], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(7, datetime, &counts[49..=53], true, true).unwrap());
             // Schuylkill Banks
-            all_counts.push(Count::new(6, datetime, &counts[54..=58], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(6, datetime, &counts[54..=58], true, true).unwrap());
             // Spring Mill Station
-            all_counts.push(Count::new(13, datetime, &counts[59..=63], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(13, datetime, &counts[59..=63], true, true).unwrap());
             // Spruce St
-            all_counts.push(Count::new(25, datetime, &counts[64..=66], false, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(25, datetime, &counts[64..=66], false, true).unwrap());
             // Tinicum Park
-            all_counts.push(Count::new(23, datetime, &counts[67..=71], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(23, datetime, &counts[67..=71], true, true).unwrap());
             // Tullytown
-            all_counts.push(Count::new(14, datetime, &counts[72..=76], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(14, datetime, &counts[72..=76], true, true).unwrap());
             // US 202 Parkway Trail
-            all_counts.push(Count::new(9, datetime, &counts[77..=81], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(9, datetime, &counts[77..=81], true, true).unwrap());
             // Washington Cross
-            all_counts.push(Count::new(15, datetime, &counts[82..=86], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(15, datetime, &counts[82..=86], true, true).unwrap());
             // Waterfront Display
-            all_counts.push(Count::new(26, datetime, &counts[87..=91], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(26, datetime, &counts[87..=91], true, true).unwrap());
             // Wissahickon Trail
-            all_counts.push(Count::new(4, datetime, &counts[92..=96], true, true).unwrap());
+            all_counts
+                .push(IndividualCount::new(4, datetime, &counts[92..=96], true, true).unwrap());
         }
 
         // Now take this data in `all_counts`, and sum by date/location_id
@@ -450,13 +497,16 @@ fn main() {
         // Flatten that hashmap into a vec.
         let mut flattened_daily_counts = vec![];
         for ((location_id, date), (ped_total, bike_total, total)) in daily_counts {
-            flattened_daily_counts.push((location_id, date, ped_total, bike_total, total));
+            flattened_daily_counts.push(AggregatedCount::new(
+                location_id,
+                date,
+                ped_total,
+                bike_total,
+                total,
+            ));
         }
-        dbg!(flattened_daily_counts);
 
-        // todo: insert converted into tblheader
-
-        info!("Deleting all existing records with same date.");
+        info!("Deleting all existing records w/ same date from tables TBLCOUNTDATA & TBLHEADER).");
         dates.sort();
         dates.dedup();
 
@@ -519,7 +569,7 @@ fn main() {
             handle.join().unwrap();
         }
 
-        // Create a channel to handle moving data into threads
+        // Create a channel to handle moving all_counts into threads
         let (tx, rx) = channel::unbounded();
 
         // Create thread to send Counts through the channel
@@ -528,7 +578,7 @@ fn main() {
                 match tx.send(count) {
                     Ok(_) => (),
                     Err(e) => {
-                        error!("Error sending data to channel: {e}.");
+                        error!("Error sending individual data to channel: {e}.");
                         return;
                     }
                 }
@@ -537,24 +587,75 @@ fn main() {
 
         // Fork: spawn new threads, with each one adding a receiver, taking a Count from the channel,
         // and inserting it into the database.
-        info!("Inserting counts into database.");
+        info!("Inserting individual counts into database.");
         let mut receiver_thread_handles = vec![];
-        let num_inserts = Arc::new(AtomicUsize::new(0));
+        let num_individual_inserts = Arc::new(AtomicUsize::new(0));
         for _ in 0..20 {
-            let num_inserts = num_inserts.clone();
+            let num_individual_inserts = num_individual_inserts.clone();
             let receiver = rx.clone();
             let conn = pool.get().unwrap();
             receiver_thread_handles.push(thread::spawn(move || {
                 while let Ok(count) = receiver.recv() {
                     // Insert. If error, log it and then propagate it to main thread.
-                    insert_count(&conn, count)
+                    insert_individual_count(&conn, count)
                         .map_err(|e| {
                             error!("Could not insert count: {e}");
                         })
                         .unwrap();
 
                     // Increment number of counts (for reporting).
-                    num_inserts.fetch_add(1, Ordering::Relaxed);
+                    num_individual_inserts.fetch_add(1, Ordering::Relaxed);
+                }
+
+                // Commit. If error, log it and then propagate it to main thread.
+                conn.commit()
+                    .map_err(|e| error!("Error committing insert to database: {e}"))
+                    .unwrap();
+            }));
+        }
+
+        // Join: wait for insert sender/receiver threads to finish, panicking on any errors.
+        sender_thread_handle.join().unwrap();
+        for handle in receiver_thread_handles {
+            handle.join().unwrap();
+        }
+
+        // Create a channel to handle moving flattened_daily_counts into threads
+        let (tx, rx) = channel::unbounded();
+
+        // Create thread to send counts through the channel
+        let sender_thread_handle = thread::spawn(move || {
+            for count in flattened_daily_counts {
+                match tx.send(count) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        error!("Error sending aggregated data to channel: {e}.");
+                        return;
+                    }
+                }
+            }
+        });
+
+        // Fork: spawn new threads, with each one adding a receiver, taking a count from the channel,
+        // and inserting it into the database.
+        info!("Inserting aggregated counts into database.");
+        let mut receiver_thread_handles = vec![];
+        let num_aggregated_inserts = Arc::new(AtomicUsize::new(0));
+        for _ in 0..20 {
+            let num_aggregated_inserts = num_aggregated_inserts.clone();
+            let receiver = rx.clone();
+            let conn = pool.get().unwrap();
+            receiver_thread_handles.push(thread::spawn(move || {
+                while let Ok(count) = receiver.recv() {
+                    // Insert. If error, log it and then propagate it to main thread.
+                    insert_aggregated_count(&conn, count)
+                        .map_err(|e| {
+                            error!("Could not insert count: {e}");
+                        })
+                        .unwrap();
+
+                    // Increment number of counts (for reporting).
+                    num_aggregated_inserts.fetch_add(1, Ordering::Relaxed);
                 }
 
                 // Commit. If error, log it and then propagate it to main thread.
@@ -571,7 +672,8 @@ fn main() {
         }
 
         info!("Import completed successfully.");
-        info!("{:?} counts inserted.", num_inserts);
+        info!("{:?} individual counts inserted.", num_individual_inserts);
+        info!("{:?} aggregated counts inserted.", num_aggregated_inserts);
         info!("Elapsed time: {:?}", start.elapsed());
 
         // Remove the csv
@@ -582,7 +684,10 @@ fn main() {
     }
 }
 
-fn insert_count(conn: &Connection, count: Count) -> Result<Statement, OracleError> {
+fn insert_individual_count(
+    conn: &Connection,
+    count: IndividualCount,
+) -> Result<Statement, OracleError> {
     // convert datetime
     let oracle_dt = Timestamp::new(
         count.datetime.year(),
@@ -604,6 +709,32 @@ fn insert_count(conn: &Connection, count: Count) -> Result<Statement, OracleErro
             &count.bike_in,
             &count.bike_out,
             &oracle_dt,
+        ],
+    )
+}
+
+fn insert_aggregated_count(
+    conn: &Connection,
+    count: AggregatedCount,
+) -> Result<Statement, OracleError> {
+    // convert datetime
+    let oracle_dt = Timestamp::new(
+        count.date.year(),
+        count.date.month(),
+        count.date.day(),
+        0,
+        0,
+        0,
+        0,
+    );
+
+    conn.execute("insert into TBLHEADER (locationid, countdate, totalped, totalbike, total) values (:1, :2, :3, :4, :5)",
+        &[
+            &count.location_id,
+            &oracle_dt,
+            &count.total_ped,
+            &count.total_bike,
+            &count.total,
         ],
     )
 }
