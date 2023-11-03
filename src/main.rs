@@ -45,7 +45,6 @@ impl IndividualCount {
         // either a ped or bike pair (in/out) or both (usually both)
         if counts.len() == 5 {
             if !bike && !ped {
-                error!("{}", CountError::TooMany);
                 return Err(CountError::TooMany);
             }
             ped_in = counts[1];
@@ -54,7 +53,6 @@ impl IndividualCount {
             bike_out = counts[4];
         } else if counts.len() == 3 {
             if bike && ped {
-                error!("{}", CountError::TooFew);
                 return Err(CountError::TooFew);
             }
             if ped && !bike {
@@ -66,7 +64,6 @@ impl IndividualCount {
                 bike_out = counts[2];
             }
         } else {
-            error!("{}", CountError::UnexpectedNumber);
             return Err(CountError::UnexpectedNumber);
         }
 
@@ -265,6 +262,13 @@ fn main() {
     ])
     .expect("Could not configure logging.");
 
+    // create closure to remove CSV file
+    let remove_csv = || {
+        // Remove the csv
+        info!("Deleting CSV file.");
+        fs::remove_file(format!("{storage_path}/export.csv")).ok()
+    };
+
     // Oracle env vars
     let username = match env::var("USERNAME") {
         Ok(v) => v,
@@ -281,14 +285,14 @@ fn main() {
         }
     };
 
-    loop {
+    'mainloop: loop {
         // Open CSV file and create reader over it, or wait and try again
         let data_file = match File::open(format!("{storage_path}/export.csv")) {
             Ok(v) => v,
             Err(_) => {
                 debug!("CSV file not located to import data from.");
                 thread::sleep(time::Duration::from_secs(TIME_BETWEEN_LOOPS));
-                continue;
+                continue 'mainloop;
             }
         };
 
@@ -308,18 +312,21 @@ fn main() {
                 Ok(v) => v,
                 Err(e) => {
                     error!("Could not parse header: {e}");
-                    return;
+                    remove_csv();
+                    continue 'mainloop;
                 }
             },
             None => {
                 error!("Header not found.");
-                return;
+                remove_csv();
+                continue 'mainloop;
             }
         };
 
         if header != expected_header {
             error!("Header file does match expected header.");
-            return;
+            remove_csv();
+            continue 'mainloop;
         }
 
         /*
@@ -338,7 +345,8 @@ fn main() {
                 Ok(v) => v,
                 Err(e) => {
                     error!("Could not read row from CSV: {e}.");
-                    return;
+                    remove_csv();
+                    continue 'mainloop;
                 }
             };
 
@@ -348,7 +356,8 @@ fn main() {
                 Ok(v) => v,
                 Err(e) => {
                     error!("Could not parse date ({datetime}) from record: {e}.");
-                    return;
+                    remove_csv();
+                    continue 'mainloop;
                 }
             };
 
@@ -360,67 +369,219 @@ fn main() {
                 .map(|v| v.parse::<i32>().ok())
                 .collect::<Vec<_>>();
 
-            // Create counts. If error, log (via new()/CountError) and panic.
-            // Bartram
-            all_counts
-                .push(IndividualCount::new(16, datetime, &counts[1..=5], true, true).unwrap());
-            // Chester Valley Trail
-            all_counts
-                .push(IndividualCount::new(1, datetime, &counts[6..=10], true, true).unwrap());
-            // Cooper River Trail
-            all_counts
-                .push(IndividualCount::new(11, datetime, &counts[11..=15], true, true).unwrap());
-            // Cynwyd Heritage Trail
-            all_counts
-                .push(IndividualCount::new(3, datetime, &counts[16..=20], true, true).unwrap());
-            // Darby Creek Trail
-            all_counts
-                .push(IndividualCount::new(12, datetime, &counts[21..=25], true, true).unwrap());
-            // Kelly Dr
-            all_counts
-                .push(IndividualCount::new(5, datetime, &counts[26..=30], true, true).unwrap());
-            // Lawrence Hopewell trail
-            all_counts
-                .push(IndividualCount::new(8, datetime, &counts[31..=35], true, true).unwrap());
-            // Monroe Twp
-            all_counts
-                .push(IndividualCount::new(10, datetime, &counts[36..=40], true, true).unwrap());
-            // Pawlings Rd
-            all_counts
-                .push(IndividualCount::new(2, datetime, &counts[41..=45], true, true).unwrap());
-            // Pine St
-            all_counts
-                .push(IndividualCount::new(24, datetime, &counts[46..=48], false, true).unwrap());
-            // Port Richmond
-            all_counts
-                .push(IndividualCount::new(7, datetime, &counts[49..=53], true, true).unwrap());
-            // Schuylkill Banks
-            all_counts
-                .push(IndividualCount::new(6, datetime, &counts[54..=58], true, true).unwrap());
-            // Spring Mill Station
-            all_counts
-                .push(IndividualCount::new(13, datetime, &counts[59..=63], true, true).unwrap());
-            // Spruce St
-            all_counts
-                .push(IndividualCount::new(25, datetime, &counts[64..=66], false, true).unwrap());
-            // Tinicum Park
-            all_counts
-                .push(IndividualCount::new(23, datetime, &counts[67..=71], true, true).unwrap());
-            // Tullytown
-            all_counts
-                .push(IndividualCount::new(14, datetime, &counts[72..=76], true, true).unwrap());
-            // US 202 Parkway Trail
-            all_counts
-                .push(IndividualCount::new(9, datetime, &counts[77..=81], true, true).unwrap());
-            // Washington Cross
-            all_counts
-                .push(IndividualCount::new(15, datetime, &counts[82..=86], true, true).unwrap());
-            // Waterfront Display
-            all_counts
-                .push(IndividualCount::new(26, datetime, &counts[87..=91], true, true).unwrap());
-            // Wissahickon Trail
-            all_counts
-                .push(IndividualCount::new(4, datetime, &counts[92..=96], true, true).unwrap());
+            // Creation of `IndividualCount`s could possibly result in out-of-bounds error, so
+            // check length first before trying to create them, in order to log error and continue
+            // running the program.
+            if counts.len() != EXPECTED_HEADER.len() {
+                error!(
+                    "Incorrect number of fields in row. Expected {}, found {}.",
+                    EXPECTED_HEADER.len(),
+                    counts.len()
+                );
+                remove_csv();
+                continue 'mainloop;
+            }
+            // Create counts.
+            let current_location = "Bartram";
+            let count = match IndividualCount::new(16, datetime, &counts[1..=5], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Chester Valley Trail";
+            let count = match IndividualCount::new(1, datetime, &counts[6..=10], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Cooper River Trail";
+            let count = match IndividualCount::new(11, datetime, &counts[11..=15], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Cynwyd Heritage Trail";
+            let count = match IndividualCount::new(3, datetime, &counts[16..=20], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Darby Creek Trail";
+            let count = match IndividualCount::new(12, datetime, &counts[21..=25], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Kelly Dr";
+            let count = match IndividualCount::new(5, datetime, &counts[26..=30], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Lawrence Hopewell trail";
+            let count = match IndividualCount::new(8, datetime, &counts[31..=35], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Monroe Twp";
+            let count = match IndividualCount::new(10, datetime, &counts[36..=40], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Pawlings Rd";
+            let count = match IndividualCount::new(2, datetime, &counts[41..=45], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Pine Street";
+            let count = match IndividualCount::new(24, datetime, &counts[46..=48], false, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Port Richmond";
+            let count = match IndividualCount::new(7, datetime, &counts[49..=53], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Schuylkill Banks";
+            let count = match IndividualCount::new(6, datetime, &counts[54..=58], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Spring Mill Station";
+            let count = match IndividualCount::new(13, datetime, &counts[59..=63], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Spruce St";
+            let count = match IndividualCount::new(25, datetime, &counts[64..=66], false, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Tinicum Park";
+            let count = match IndividualCount::new(23, datetime, &counts[67..=71], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Tullytown";
+            let count = match IndividualCount::new(14, datetime, &counts[72..=76], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "US 202 Parkway Trail";
+            let count = match IndividualCount::new(9, datetime, &counts[77..=81], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Washington Cross";
+            let count = match IndividualCount::new(15, datetime, &counts[82..=86], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Waterfront Display";
+            let count = match IndividualCount::new(26, datetime, &counts[87..=91], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
+            let current_location = "Wissahickon Trail";
+            let count = match IndividualCount::new(4, datetime, &counts[92..=96], true, true) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error creating count for {}: {}", current_location, e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            };
+            all_counts.push(count);
         }
 
         // Now take this data in `all_counts`, and sum by date/location_id
@@ -510,7 +671,7 @@ fn main() {
         dates.sort();
         dates.dedup();
 
-        // Create connection pool; if error, log and panic.
+        // Create connection pool.
         let pool = match PoolBuilder::new(username.clone(), password.clone(), "dvrpcprod_tp_tls")
             .max_connections(31)
             .build()
@@ -518,7 +679,8 @@ fn main() {
             Ok(v) => v,
             Err(e) => {
                 error!("Unable to create connection pool: {e}");
-                return;
+                remove_csv();
+                continue 'mainloop;
             }
         };
 
@@ -529,7 +691,8 @@ fn main() {
                 Ok(v) => v,
                 Err(e) => {
                     error!("Unable to get connection from pool: {e}");
-                    return;
+                    remove_csv();
+                    continue 'mainloop;
                 }
             };
             delete_thread_handles.push(thread::spawn(move || {
@@ -564,9 +727,16 @@ fn main() {
             }));
         }
 
-        // Join: wait for delete threads to finish, panicking on any errors.
+        // Join: wait for delete threads to finish.
         for handle in delete_thread_handles {
-            handle.join().unwrap();
+            match handle.join() {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("{:?}", e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            }
         }
 
         // Create a channel to handle moving all_counts into threads
@@ -614,10 +784,24 @@ fn main() {
             }));
         }
 
-        // Join: wait for insert sender/receiver threads to finish, panicking on any errors.
-        sender_thread_handle.join().unwrap();
+        // Join: wait for insert sender/receiver threads to finish
+        match sender_thread_handle.join() {
+            Ok(_) => (),
+            Err(e) => {
+                error!("{:?}", e);
+                remove_csv();
+                continue 'mainloop;
+            }
+        }
         for handle in receiver_thread_handles {
-            handle.join().unwrap();
+            match handle.join() {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("{:?}", e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            }
         }
 
         // Create a channel to handle moving flattened_daily_counts into threads
@@ -665,10 +849,24 @@ fn main() {
             }));
         }
 
-        // Join: wait for insert sender/receiver threads to finish, panicking on any errors.
-        sender_thread_handle.join().unwrap();
+        // Join: wait for insert sender/receiver threads to finish.
+        match sender_thread_handle.join() {
+            Ok(_) => (),
+            Err(e) => {
+                error!("{:?}", e);
+                remove_csv();
+                continue 'mainloop;
+            }
+        }
         for handle in receiver_thread_handles {
-            handle.join().unwrap();
+            match handle.join() {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("{:?}", e);
+                    remove_csv();
+                    continue 'mainloop;
+                }
+            }
         }
 
         info!("Import completed successfully.");
@@ -677,7 +875,7 @@ fn main() {
         info!("Elapsed time: {:?}", start.elapsed());
 
         // Remove the csv
-        fs::remove_file(format!("{storage_path}/export.csv")).ok();
+        remove_csv();
 
         // Wait to try again
         thread::sleep(time::Duration::from_secs(TIME_BETWEEN_LOOPS));
