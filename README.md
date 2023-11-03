@@ -1,13 +1,7 @@
 # Eco-Counter Data Import
 
-## Requirements
+This program extracts and aggregates bicycle and pedestrian count data, which DVRPC downloads as a CSV file from the private company, Eco-Counter, that collects this data from their counters that we installed in various locations in the region. It inserts the individual and aggregated data into the TBLCOUNTDATA and TBLHEADER tables in our BIKEPED Oracle database, after removing any existing records matching the dates for the counts. We currently do this with monthly data, however a different frequency could be used.
 
-An Oracle client needs to be installed on the machine this runs on, with configured wallet, tnsnames.ora, and sqlnet.ora. Additionally, a .env file needs to be created, holding variables `USERNAME` and `PASSWORD` for the appropriate Oracle database.
+It runs continuously, checking for the expected CSV file in the expected location (set by an environment variable - see below). If the CSV is not found, it waits 15 seconds and tries again. It handles the majority of errors gracefully: logging the error, removing the CSV file, and continuing its loop. However, some errors will cause the program to abort: if it is unable to create/open the log file, if there is no .env file, or if the .env file doesn't contain the expected variables. (Note that there are some `.unwrap()`s in threads, but these will propagate up to the main thread to be handled.)
 
-## Error Handling
-
-The program will abort - without logging any error - if it is unable to create/open the lof file.
-
-It will abort (after logging the error) if there is no .env file or the .env file doesn't contained the expected variables.
-
-Otherwise, it will log errors, delete the CSV, and continue running, waiting for the CSV to be re-uploaded to execute. (There are some `.unwrap()`s in threads, but these will propagate up to the main thread and will be handled there.)
+An Oracle client needs to be installed on the machine this runs on, with configured wallet, tnsnames.ora, and sqlnet.ora. (See <https://odpi-c.readthedocs.io/en/latest/user_guide/installation.html#linux>.) Additionally, a .env file needs to be created, holding variables `USERNAME` and `PASSWORD` (to the Oracle database) and `PATH_TO_CSV_AND_LOG`.
