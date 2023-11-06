@@ -130,6 +130,8 @@ impl AggregatedCount {
     }
 }
 
+// Threads are limited to this number in order to limit number of concurrent connections to
+// database, otherwise this could easily triple to improve performance.
 const NUM_THREADS: usize = 10;
 
 const EXPECTED_HEADER: &[&str] = &[
