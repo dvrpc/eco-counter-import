@@ -130,6 +130,8 @@ impl AggregatedCount {
     }
 }
 
+const NUM_THREADS: usize = 10;
+
 const EXPECTED_HEADER: &[&str] = &[
     "Time",
     "Bartram's Garden", // 16 (locationid)
@@ -667,13 +669,12 @@ fn main() {
             ));
         }
 
-        info!("Deleting all existing records w/ same date from tables TBLCOUNTDATA & TBLHEADER).");
         dates.sort();
         dates.dedup();
 
         // Create connection pool.
         let pool = match PoolBuilder::new(username.clone(), password.clone(), "dvrpcprod_tp_tls")
-            .max_connections(31)
+            .max_connections(NUM_THREADS as u32)
             .build()
         {
             Ok(v) => v,
@@ -684,51 +685,79 @@ fn main() {
             }
         };
 
-        // Create threads to delete all rows associated with each date
-        let mut delete_thread_handles = vec![];
-        for date in dates {
-            let conn = match pool.get() {
-                Ok(v) => v,
-                Err(e) => {
-                    error!("Unable to get connection from pool: {e}");
-                    remove_csv();
-                    continue 'mainloop;
+        // Create a channel to handle moving dates into threads
+        let (tx, rx) = channel::unbounded();
+
+        // Create thread to send dates through the channel
+        let sender_thread_handle = thread::spawn(move || {
+            for date in dates {
+                match tx.send(date) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        error!("Error sending date to channel: {e}.");
+                        return;
+                    }
                 }
-            };
-            delete_thread_handles.push(thread::spawn(move || {
-                // Delete from TBLCOUNTDATA and TBLHEADER.
-                // If error, log it and then propagate it to main thread.
-                conn.execute(
-                    "delete from TBLCOUNTDATA where to_char(COUNTDATE, 'DD-MON-YY')=:1",
-                    &[&date],
-                )
-                .map_err(|e| {
-                    error!("Error deleting existing records from TBLCOUNTDATA for {date}: {e}");
-                })
-                .unwrap();
+            }
+        });
 
-                conn.execute(
-                    "delete from TBLHEADER where to_char(COUNTDATE, 'DD-MON-YY')=:1",
-                    &[&date],
-                )
-                .map_err(|e| {
-                    error!("Error deleting existing records from TBLHEADER for {date}: {e}");
-                })
-                .unwrap();
+        // Fork: spawn new threads, with each one adding a receiver, taking a date from the channel,
+        // and deleting existing records for that date.
+        info!("Deleting all existing records w/ same date from tables TBLCOUNTDATA & TBLHEADER).");
+        let mut receiver_thread_handles = vec![];
+        let num_deletes = Arc::new(AtomicUsize::new(0));
+        for _ in 0..NUM_THREADS {
+            let num_deletes = num_deletes.clone();
+            let receiver = rx.clone();
+            let conn = pool.get().unwrap();
 
-                // Commit. If error, log it and then propagate it to main thread.
-                conn.commit()
+            receiver_thread_handles.push(thread::spawn(move || {
+                while let Ok(date) = receiver.recv() {
+                    // Delete from TBLCOUNTDATA and TBLHEADER.
+                    // If error, log it and then propagate it to main thread.
+                    conn.execute(
+                        "delete from TBLCOUNTDATA where to_char(COUNTDATE, 'DD-MON-YY')=:1",
+                        &[&date],
+                    )
                     .map_err(|e| {
-                        error!(
-                            "Error committing deletion of existing record for {date} from db: {e}"
-                        )
+                        error!("Error deleting existing records from TBLCOUNTDATA for {date}: {e}");
                     })
                     .unwrap();
-            }));
+
+                    conn.execute(
+                        "delete from TBLHEADER where to_char(COUNTDATE, 'DD-MON-YY')=:1",
+                        &[&date],
+                    )
+                    .map_err(|e| {
+                        error!("Error deleting existing records from TBLHEADER for {date}: {e}");
+                    })
+                    .unwrap();
+
+                    // Commit. If error, log it and then propagate it to main thread.
+                    conn.commit()
+                        .map_err(|e| {
+                            error!(
+                                "Error committing deletion of existing record for {date} from db: {e}"
+                            )
+                        })
+                        .unwrap();
+                    // Increment number of counts (for reporting).
+                    num_deletes.fetch_add(1, Ordering::Relaxed);
+                }
+                })
+            );
         }
 
-        // Join: wait for delete threads to finish.
-        for handle in delete_thread_handles {
+        // Join: wait for delete sender/receiver threads to finish
+        match sender_thread_handle.join() {
+            Ok(_) => (),
+            Err(e) => {
+                error!("{:?}", e);
+                remove_csv();
+                continue 'mainloop;
+            }
+        }
+        for handle in receiver_thread_handles {
             match handle.join() {
                 Ok(_) => (),
                 Err(e) => {
@@ -760,7 +789,7 @@ fn main() {
         info!("Inserting individual counts into database.");
         let mut receiver_thread_handles = vec![];
         let num_individual_inserts = Arc::new(AtomicUsize::new(0));
-        for _ in 0..20 {
+        for _ in 0..NUM_THREADS {
             let num_individual_inserts = num_individual_inserts.clone();
             let receiver = rx.clone();
             let conn = pool.get().unwrap();
@@ -825,7 +854,7 @@ fn main() {
         info!("Inserting aggregated counts into database.");
         let mut receiver_thread_handles = vec![];
         let num_aggregated_inserts = Arc::new(AtomicUsize::new(0));
-        for _ in 0..20 {
+        for _ in 0..NUM_THREADS {
             let num_aggregated_inserts = num_aggregated_inserts.clone();
             let receiver = rx.clone();
             let conn = pool.get().unwrap();
@@ -870,6 +899,7 @@ fn main() {
         }
 
         info!("Import completed successfully.");
+        info!("Records for {:?} dates deleted.", num_deletes);
         info!("{:?} individual counts inserted.", num_individual_inserts);
         info!("{:?} aggregated counts inserted.", num_aggregated_inserts);
         info!("Elapsed time: {:?}", start.elapsed());
