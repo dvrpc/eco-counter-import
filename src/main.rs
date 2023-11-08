@@ -918,7 +918,20 @@ fn insert_individual_count(
     conn: &Connection,
     count: IndividualCount,
 ) -> Result<Statement, OracleError> {
-    // convert datetime
+    // convert datetime to date
+    // the COUNTDATE field needs to be date only, allowing the database to set the default time
+    // because existing programs rely on that to do daily/hourly aggregation
+    let oracle_date = Timestamp::new(
+        count.datetime.year(),
+        count.datetime.month(),
+        count.datetime.day(),
+        0,
+        0,
+        0,
+        0,
+    );
+
+    // COUNTTIME is ok to be full datetime
     let oracle_dt = Timestamp::new(
         count.datetime.year(),
         count.datetime.month(),
@@ -932,7 +945,7 @@ fn insert_individual_count(
     conn.execute("insert into TBLCOUNTDATA (locationid, countdate, total, pedin, pedout, bikein, bikeout, counttime) values (:1, :2, :3, :4, :5, :6, :7, :8)",
         &[
             &count.location_id,
-            &oracle_dt,
+            &oracle_date,
             &count.total,
             &count.ped_in,
             &count.ped_out,
