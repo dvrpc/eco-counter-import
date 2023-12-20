@@ -41,30 +41,38 @@ impl IndividualCount {
         let mut bike_in = None;
         let mut bike_out = None;
 
-        // `counts` is a slice from the whole row, starting with total (index 0) and followed by
-        // either a ped or bike pair (in/out) or both (usually both)
-        if counts.len() == 5 {
-            if !bike && !ped {
-                return Err(CountError::TooMany);
-            }
-            ped_in = counts[1];
-            ped_out = counts[2];
-            bike_in = counts[3];
-            bike_out = counts[4];
-        } else if counts.len() == 3 {
-            if bike && ped {
-                return Err(CountError::TooFew);
-            }
-            if ped && !bike {
+        // EcoVizio does not properly report the bike data for the two bike-lane-only counters:
+        // It produces 3 fields for them, but they are total, pedin, and pedout, rather than
+        // what they should be: total, bikein, bikeout. Fortunately, the total = bikein,
+        // so manually handle that.
+        if location_id == 24 || location_id == 25 {
+            bike_in = counts[0]
+        } else {
+            // `counts` is a slice from the whole row, starting with total (index 0) and followed by
+            // either a ped or bike pair (in/out) or both (usually both)
+            if counts.len() == 5 {
+                if !bike && !ped {
+                    return Err(CountError::TooMany);
+                }
                 ped_in = counts[1];
                 ped_out = counts[2];
+                bike_in = counts[3];
+                bike_out = counts[4];
+            } else if counts.len() == 3 {
+                if bike && ped {
+                    return Err(CountError::TooFew);
+                }
+                if ped && !bike {
+                    ped_in = counts[1];
+                    ped_out = counts[2];
+                }
+                if !ped && bike {
+                    bike_in = counts[1];
+                    bike_out = counts[2];
+                }
+            } else {
+                return Err(CountError::UnexpectedNumber);
             }
-            if !ped && bike {
-                bike_in = counts[1];
-                bike_out = counts[2];
-            }
-        } else {
-            return Err(CountError::UnexpectedNumber);
         }
 
         Ok(Self {
