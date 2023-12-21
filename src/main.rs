@@ -46,7 +46,12 @@ impl IndividualCount {
         // what they should be: total, bikein, bikeout. Fortunately, the total = bikein,
         // so manually handle that.
         if location_id == 24 || location_id == 25 {
-            bike_in = counts[0]
+            bike_in = counts[0];
+
+            // On top of this, the webmap for this -
+            // <https://www.dvrpc.org/webmaps/permbikeped/>
+            // requires missing data to be encoded as 0, so...
+            bike_out = Some(0);
         } else {
             // `counts` is a slice from the whole row, starting with total (index 0) and followed by
             // either a ped or bike pair (in/out) or both (usually both)
