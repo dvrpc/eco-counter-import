@@ -811,9 +811,9 @@ fn main() {
             receiver_thread_handles.push(thread::spawn(move || {
                 while let Ok(count) = receiver.recv() {
                     // Insert. If error, log it and then propagate it to main thread.
-                    insert_individual_count(&conn, count)
+                    insert_individual_count(&conn, count.clone())
                         .map_err(|e| {
-                            error!("Could not insert count: {e}");
+                            error!("Could not insert count {count:?}: {e}");
                         })
                         .unwrap();
 
