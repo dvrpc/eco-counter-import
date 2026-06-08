@@ -1,5 +1,7 @@
 # Eco-Counter Data Import
 
+NOTE: this import program has been folded into [traffic-counts](https://github.com/dvrpc/traffic-counts).
+
 This program extracts and aggregates bicycle and pedestrian count data, which DVRPC downloads as a CSV file from the private company, Eco-Counter, that collects this data from their counters that we installed in various locations in the region. It inserts the individual and aggregated data into the TBLCOUNTDATA and TBLHEADER tables in our BIKEPED Oracle database, after removing any existing records matching the dates for the counts. We currently do this with monthly data, however a different frequency could be used.
 
 It runs continuously, checking for the expected CSV file in the expected location (set by an environment variable - see below). If the CSV is not found, it waits 15 seconds and tries again. It handles the majority of errors gracefully: logging the error, removing the CSV file, and continuing its loop. However, some errors will cause the program to abort: if it is unable to create/open the log file, if there is no .env file, or if the .env file doesn't contain the expected variables. (Note that there are some `.unwrap()`s in threads, but these will propagate up to the main thread to be handled.)
